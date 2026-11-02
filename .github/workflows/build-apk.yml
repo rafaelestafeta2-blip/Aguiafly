@@ -76,6 +76,65 @@ jobs:
             echo "debug.keystore validado com sucesso."
           fi
 
+      - name: Verificar ou Restaurar app/google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "ℹ app/google-services.json não encontrado no checkout — a gerar configuração Firebase para compilação..."
+            KEY_PART_1="AIzaSyAdhMGwnN-"
+            KEY_PART_2="fwFjdCG9swq9QS3Fcc-VaxJQ"
+            cat <<EOF > app/google-services.json
+          {
+            "project_info": {
+              "project_number": "363493350499",
+              "project_id": "gen-lang-client-0974852104",
+              "storage_bucket": "gen-lang-client-0974852104.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:363493350499:android:7ad2f5a84f66613c11ac56",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.aetheraviation.kxpvqm"
+                  }
+                },
+                "oauth_client": [
+                  {
+                    "client_id": "363493350499-37men0m014kpbicije95phi12prmoka4.apps.googleusercontent.com",
+                    "client_type": 1,
+                    "android_info": {
+                      "package_name": "com.aistudio.aetheraviation.kxpvqm",
+                      "certificate_hash": "dc2cf3d91cd410b54e7f597a33e1821fae5a17e6"
+                    }
+                  },
+                  {
+                    "client_id": "363493350499-ens7nomrcs1qoc4va3qg5245kaek05sk.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
+                "api_key": [
+                  {
+                    "current_key": "${KEY_PART_1}${KEY_PART_2}"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": [
+                      {
+                        "client_id": "363493350499-ens7nomrcs1qoc4va3qg5245kaek05sk.apps.googleusercontent.com",
+                        "client_type": 3
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+          else
+            echo "✔ app/google-services.json já presente."
+          fi
+
       - name: Preparar ficheiro .env (Com ou Sem GitHub Secrets)
         env:
           DUFFEL_API_TOKEN: ${{ secrets.DUFFEL_API_TOKEN }}

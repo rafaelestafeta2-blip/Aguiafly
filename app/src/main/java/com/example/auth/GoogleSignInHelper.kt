@@ -58,6 +58,24 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
+private const val FALLBACK_WEB_CLIENT_ID =
+    "363493350499-ens7nomrcs1qoc4va3qg5245kaek05sk.apps.googleusercontent.com"
+
+private fun resolveWebClientId(context: Context): String {
+    val resId = context.resources.getIdentifier(
+        "default_web_client_id",
+        "string",
+        context.packageName
+    )
+    if (resId != 0) {
+        val value = runCatching { context.getString(resId) }.getOrNull()
+        if (!value.isNullOrBlank()) {
+            return value
+        }
+    }
+    return FALLBACK_WEB_CLIENT_ID
+}
+
 fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -69,9 +87,8 @@ fun attemptAutoSignIn(
         onAuthSuccess()
         return
     }
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
+    val clientId = resolveWebClientId(context)
+    if (clientId.isBlank()) {
         onUnauthenticated()
         return
     }
@@ -112,9 +129,8 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
+    val clientId = resolveWebClientId(context)
+    if (clientId.isBlank()) {
         onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
         return
     }
