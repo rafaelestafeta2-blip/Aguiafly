@@ -27,25 +27,53 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Configurar Android SDK & Aceitar Licenças
+      - name: Configurar Android SDK (API 36.1 & Build-Tools 36.0.0)
         run: |
           export ANDROID_SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sudo mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          sudo chown -R "$(id -u):$(id -g)" "$ANDROID_SDK_ROOT" || true
+
           echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
+
+          # Gravar todas as licenças oficiais do Android SDK (incluindo Android 16 / API 36.1)
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
+          printf "\n601085b94cd77f0b54ff86406957099ebe79c4d6" > "$ANDROID_SDK_ROOT/licenses/android-googletv-license"
+          printf "\nceff83576aac4f7f37cb98fe189e9fb3c49d3b81" > "$ANDROID_SDK_ROOT/licenses/android-googlexr-license"
+          printf "\n33b6a2b64607f11b759f320ef9dff4ae5c47d97a" > "$ANDROID_SDK_ROOT/licenses/google-gdk-license"
+
           SDKMANAGER=$(find "$ANDROID_SDK_ROOT/cmdline-tools" -name sdkmanager 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$SDKMANAGER" ]; then
-            echo "Usando sdkmanager em: $SDKMANAGER"
+            echo "Atualizando cmdline-tools e instalando platforms;android-36.1 e build-tools;36.0.0..."
             yes | "$SDKMANAGER" --licenses > /dev/null || true
-          else
-            mkdir -p "$ANDROID_SDK_ROOT/licenses"
-            printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+            "$SDKMANAGER" --install "cmdline-tools;latest" > /dev/null || true
+            if [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+              SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            fi
+            yes | "$SDKMANAGER" --licenses > /dev/null || true
+            "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0"
           fi
 
-      - name: Restaurar debug.keystore a partir de debug.keystore.base64
+      - name: Restaurar ou Gerar debug.keystore
         run: |
           if [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-            echo "debug.keystore restaurado com sucesso."
+            base64 -di debug.keystore.base64 > debug.keystore || true
+          fi
+          if ! keytool -list -keystore debug.keystore -storepass android >/dev/null 2>&1; then
+            echo "Gerando debug.keystore padrão..."
+            rm -f debug.keystore
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          else
+            echo "debug.keystore validado com sucesso."
           fi
 
       - name: Preparar ficheiro .env com Chaves Reais (GitHub Secrets)
@@ -54,18 +82,22 @@ jobs:
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
         run: |
-          if [ -n "$DUFFEL_API_TOKEN" ]; then
-            echo "DUFFEL_API_TOKEN=${DUFFEL_API_TOKEN}" > .env
+          CLEAN_DUFFEL=$(printf "%s" "$DUFFEL_API_TOKEN" | tr -d '"\r\n')
+          CLEAN_STRIPE_PUB=$(printf "%s" "$STRIPE_PUBLISHABLE_KEY" | tr -d '"\r\n')
+          CLEAN_STRIPE_SEC=$(printf "%s" "$STRIPE_SECRET_KEY" | tr -d '"\r\n')
+
+          if [ -n "$CLEAN_DUFFEL" ]; then
+            echo "DUFFEL_API_TOKEN=${CLEAN_DUFFEL}" > .env
           else
             echo "DUFFEL_API_TOKEN=DUFFEL_SANDBOX_TOKEN_PLACEHOLDER" > .env
           fi
-          if [ -n "$STRIPE_PUBLISHABLE_KEY" ]; then
-            echo "STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}" >> .env
+          if [ -n "$CLEAN_STRIPE_PUB" ]; then
+            echo "STRIPE_PUBLISHABLE_KEY=${CLEAN_STRIPE_PUB}" >> .env
           else
             echo "STRIPE_PUBLISHABLE_KEY=STRIPE_PUBLISHABLE_KEY_PLACEHOLDER" >> .env
           fi
-          if [ -n "$STRIPE_SECRET_KEY" ]; then
-            echo "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}" >> .env
+          if [ -n "$CLEAN_STRIPE_SEC" ]; then
+            echo "STRIPE_SECRET_KEY=${CLEAN_STRIPE_SEC}" >> .env
           else
             echo "STRIPE_SECRET_KEY=STRIPE_SECRET_KEY_PLACEHOLDER" >> .env
           fi
@@ -74,9 +106,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+          cache-read-only: false
 
       - name: Compilar APK Oficial (assembleDebug)
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle :app:assembleDebug --no-configuration-cache --max-workers=2 --console=plain --stacktrace
 
       - name: Publicar APK para Download nos Artifacts do GitHub
         uses: actions/upload-artifact@v4
