@@ -196,7 +196,6 @@ fun ProfilePassportScreen(
 
     var activeSectionTab by rememberSaveable { mutableStateOf(ProfileSectionTab.PASSPORT_GALLERY) }
     var galleryDisplayMode by rememberSaveable { mutableStateOf(PassportGalleryDisplayMode.CHRONOLOGICAL_TIMELINE) }
-    var showAddPastTripDialog by rememberSaveable { mutableStateOf(false) }
     var showCoverPresetsBar by rememberSaveable { mutableStateOf(false) }
     var stampIdPendingPhoto by remember { mutableStateOf<String?>(null) }
     var saveFeedbackBanner by remember { mutableStateOf<String?>(null) }
@@ -228,32 +227,35 @@ fun ProfilePassportScreen(
         }
     }
 
-    val stampPhotoPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
+    // Seletor múltiplo de até 15 fotos para cada carimbo gerado automaticamente pelo bilhete emitido
+    val stampMultiplePhotosPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(com.example.data.model.MAX_PHOTOS_PER_STAMP)
+    ) { uris ->
         val targetId = stampIdPendingPhoto
-        if (uri != null && targetId != null) {
-            val savedUri = ProfilePassportStorage.persistPickedImageToInternalStorage(
-                context = context,
-                sourceUri = uri,
-                prefix = "stamp_${targetId.takeLast(8)}"
-            )
-            if (savedUri != null) {
-                if (targetId.startsWith("ticket_")) {
-                    val rawTicketKey = targetId.removePrefix("ticket_")
-                    updateAndPersistVisualState { state ->
-                        state.copy(
-                            ticketPhotoOverrides = state.ticketPhotoOverrides + (rawTicketKey to savedUri)
-                        )
-                    }
-                } else {
-                    updateAndPersistVisualState { state ->
-                        state.copy(
-                            manualStamps = state.manualStamps.map { st ->
-                                if (st.id == targetId) st.copy(photoUri = savedUri) else st
-                            }
-                        )
-                    }
+        if (uris.isNotEmpty() && targetId != null && targetId.startsWith("ticket_")) {
+            val rawTicketKey = targetId.removePrefix("ticket_")
+            val persistedList = uris.mapNotNull { pickedUri ->
+                ProfilePassportStorage.persistPickedImageToInternalStorage(
+                    context = context,
+                    sourceUri = pickedUri,
+                    prefix = "stamp_${rawTicketKey.takeLast(8)}"
+                )
+            }
+            if (persistedList.isNotEmpty()) {
+                updateAndPersistVisualState { state ->
+                    val existing = state.ticketPhotoLists[rawTicketKey]
+                        ?: listOfNotNull(state.ticketPhotoOverrides[rawTicketKey])
+                    val merged = (existing + persistedList)
+                        .distinct()
+                        .take(com.example.data.model.MAX_PHOTOS_PER_STAMP)
+                    state.copy(
+                        ticketPhotoLists = state.ticketPhotoLists + (rawTicketKey to merged),
+                        ticketPhotoOverrides = if (merged.isNotEmpty()) {
+                            state.ticketPhotoOverrides + (rawTicketKey to merged.first())
+                        } else {
+                            state.ticketPhotoOverrides
+                        }
+                    )
                 }
             }
         }
@@ -383,7 +385,7 @@ fun ProfilePassportScreen(
                 }
             }
 
-            // 3B. Barra de Ações do Passaporte: "+ Carimbar Viagem Passada" e alternador de visão
+            // 3B. Cabeçalho de Carimbos Automáticos (100% gerados pela compra de bilhetes) e alternador de visão
             item {
                 Column(
                     modifier = Modifier
@@ -398,31 +400,15 @@ fun ProfilePassportScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Carimbos & Linha do Tempo de Viagens",
+                                text = "Carimbos Oficiais de Bilhetes Emitidos",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                text = "Toque em qualquer destino para anexar sua foto da viagem",
+                                text = "Gerados automaticamente na compra do bilhete • Adicione até 15 fotos em cada carimbo",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-
-                        Button(
-                            onClick = { showAddPastTripDialog = true },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.testTag("add_past_trip_stamp_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AddLocationAlt,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Carimbar Viagem", fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -473,28 +459,21 @@ fun ProfilePassportScreen(
                                 modifier = Modifier.size(44.dp)
                             )
                             Text(
-                                text = "Seu Passaporte AguiaFly está pronto para o primeiro carimbo!",
+                                text = "Carimbos Oficiais Automáticos AguiaFly",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 textAlign = TextAlign.Center
                             )
                             Text(
-                                text = "Cada passagem emitida no AguiaFly adiciona automaticamente o carimbo oficial do país e do aeroporto aqui. Você também pode carimbar viagens que já fez no passado com fotos da sua galeria!",
+                                text = "Para garantir autenticidade, os carimbos de países no Passaporte são gerados automaticamente sempre que você compra um bilhete no AguiaFly. Após a emissão do bilhete, você pode anexar até 15 fotos reais da viagem no seu carimbo!",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(onClick = { showAddPastTripDialog = true }) {
-                                    Icon(Icons.Default.AddLocationAlt, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Carimbar Viagem Passada")
-                                }
-                                OutlinedButton(onClick = onNavigateToFlights) {
-                                    Icon(Icons.Default.FlightTakeoff, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Pesquisar Voos")
-                                }
+                            Button(onClick = onNavigateToFlights) {
+                                Icon(Icons.Default.FlightTakeoff, contentDescription = null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Pesquisar Voos e Emitir Bilhete")
                             }
                         }
                     }
@@ -514,17 +493,25 @@ fun ProfilePassportScreen(
                                 stamp = stamp,
                                 onPickDestinationPhoto = {
                                     stampIdPendingPhoto = stamp.id
-                                    stampPhotoPicker.launch(
+                                    stampMultiplePhotosPicker.launch(
                                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                     )
                                 },
-                                onDeleteManualStamp = if (!stamp.isFromIssuedTicket) {
-                                    {
-                                        updateAndPersistVisualState { st ->
-                                            st.copy(manualStamps = st.manualStamps.filterNot { it.id == stamp.id })
-                                        }
+                                onRemovePhotoUri = { uriToRemove ->
+                                    val rawTicketKey = stamp.id.removePrefix("ticket_")
+                                    updateAndPersistVisualState { state ->
+                                        val updatedList = (state.ticketPhotoLists[rawTicketKey] ?: emptyList())
+                                            .filterNot { it == uriToRemove }
+                                        state.copy(
+                                            ticketPhotoLists = state.ticketPhotoLists + (rawTicketKey to updatedList),
+                                            ticketPhotoOverrides = if (updatedList.isNotEmpty()) {
+                                                state.ticketPhotoOverrides + (rawTicketKey to updatedList.first())
+                                            } else {
+                                                state.ticketPhotoOverrides - rawTicketKey
+                                            }
+                                        )
                                     }
-                                } else null,
+                                },
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -534,23 +521,31 @@ fun ProfilePassportScreen(
                     }
                 }
             } else {
-                // Visão Linha do Tempo & Galeria Cronológica
+                // Visão Linha do Tempo & Galeria Cronológica (com até 15 fotos por carimbo emitido)
                 items(allStamps, key = { it.id }) { stamp ->
                     PassportTimelineGalleryCard(
                         stamp = stamp,
                         onPickDestinationPhoto = {
                             stampIdPendingPhoto = stamp.id
-                            stampPhotoPicker.launch(
+                            stampMultiplePhotosPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             )
                         },
-                        onDeleteManualStamp = if (!stamp.isFromIssuedTicket) {
-                            {
-                                updateAndPersistVisualState { st ->
-                                    st.copy(manualStamps = st.manualStamps.filterNot { it.id == stamp.id })
-                                }
+                        onRemovePhotoUri = { uriToRemove ->
+                            val rawTicketKey = stamp.id.removePrefix("ticket_")
+                            updateAndPersistVisualState { state ->
+                                val updatedList = (state.ticketPhotoLists[rawTicketKey] ?: emptyList())
+                                    .filterNot { it == uriToRemove }
+                                state.copy(
+                                    ticketPhotoLists = state.ticketPhotoLists + (rawTicketKey to updatedList),
+                                    ticketPhotoOverrides = if (updatedList.isNotEmpty()) {
+                                        state.ticketPhotoOverrides + (rawTicketKey to updatedList.first())
+                                    } else {
+                                        state.ticketPhotoOverrides - rawTicketKey
+                                    }
+                                )
                             }
-                        } else null,
+                        },
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
@@ -808,25 +803,6 @@ fun ProfilePassportScreen(
                 }
             }
         }
-    }
-
-    if (showAddPastTripDialog) {
-        AddPastTripStampDialog(
-            onDismiss = { showAddPastTripDialog = false },
-            onPersistPickedPhoto = { pickedUri ->
-                ProfilePassportStorage.persistPickedImageToInternalStorage(
-                    context = context,
-                    sourceUri = pickedUri,
-                    prefix = "trip_${System.currentTimeMillis()}"
-                )
-            },
-            onConfirmStamp = { newStamp ->
-                updateAndPersistVisualState { st ->
-                    st.copy(manualStamps = listOf(newStamp) + st.manualStamps)
-                }
-                showAddPastTripDialog = false
-            }
-        )
     }
 }
 

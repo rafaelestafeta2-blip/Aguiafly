@@ -119,41 +119,67 @@ fun SearchAndResultsScreen(
     var localCabin by remember(cabinClass) { mutableStateOf(cabinClass) }
     var showCreateAlertDialog by remember { mutableStateOf(false) }
     var hasAutoDetectedLocation by rememberSaveable { mutableStateOf(false) }
-
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        val result = NearestAirportLocator.detectNearestAirport(context)
-        localOrigin = result.airport.iataCode
-        onDetectNearestAirport(result)
+    var hasTriggeredStartupPromoRadar by rememberSaveable { mutableStateOf(false) }
+    var isAutoGlobalRadarEnabled by remember {
+        mutableStateOf(PushNotificationHelper.isGlobalAutoPromoRadarEnabled(context))
     }
 
-    LaunchedEffect(Unit) {
-        if (!hasAutoDetectedLocation && detectedAirport == null) {
-            hasAutoDetectedLocation = true
-            if (NearestAirportLocator.hasLocationPermission(context)) {
-                val result = NearestAirportLocator.detectNearestAirport(context)
-                localOrigin = result.airport.iataCode
-                onDetectNearestAirport(result)
-            } else {
-                // Detecta imediatamente via fuso horário/região e solicita permissão GPS para precisão exata
-                val initialFallback = NearestAirportLocator.detectNearestAirport(context)
-                localOrigin = initialFallback.airport.iataCode
-                onDetectNearestAirport(initialFallback)
-                locationPermissionLauncher.launch(
-                    arrayOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.ACCESS_COARSE_LOCATION
-                    )
-                )
-            }
+    val unifiedPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        NearestAirportLocator.requestActiveGpsAirportUpdate(context) { result ->
+            localOrigin = result.airport.iataCode
+            onDetectNearestAirport(result)
+        }
+        if (isAutoGlobalRadarEnabled && PushNotificationHelper.hasNotificationPermission(context)) {
+            onTriggerPromoCronSweep()
         }
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { _ ->
-        showCreateAlertDialog = true
+    ) { granted ->
+        if (granted && isAutoGlobalRadarEnabled) {
+            onTriggerPromoCronSweep()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasAutoDetectedLocation && detectedAirport == null) {
+            hasAutoDetectedLocation = true
+            val permissionsToRequest = buildList {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                add(Manifest.permission.CAMERA)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }.toTypedArray()
+
+            if (NearestAirportLocator.hasLocationPermission(context)) {
+                NearestAirportLocator.requestActiveGpsAirportUpdate(context) { result ->
+                    localOrigin = result.airport.iataCode
+                    onDetectNearestAirport(result)
+                }
+            } else {
+                val initialFallback = NearestAirportLocator.detectNearestAirport(context)
+                localOrigin = initialFallback.airport.iataCode
+                onDetectNearestAirport(initialFallback)
+            }
+
+            unifiedPermissionsLauncher.launch(permissionsToRequest)
+        }
+    }
+
+    // Dispara automaticamente a varredura de promoções via API e Radar Global ao abrir o app
+    LaunchedEffect(localOrigin, isAutoGlobalRadarEnabled) {
+        if (!hasTriggeredStartupPromoRadar && isAutoGlobalRadarEnabled) {
+            hasTriggeredStartupPromoRadar = true
+            PushNotificationHelper.scheduleBackgroundGlobalPromoRadar(context)
+            if (PushNotificationHelper.hasNotificationPermission(context)) {
+                onTriggerPromoCronSweep()
+            }
+        }
     }
 
     val lowestCurrentFareEur = remember(offers) {
@@ -185,28 +211,14 @@ fun SearchAndResultsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Barra de Localização Automática (Aeroporto Mais Próximo + Botão GPS) & Seletor de Moeda Visual
+        // Barra de Localização Automática (Aeroporto Mais Próximo) & Seletor de Moeda Visual
         item {
             NearestAirportAndCurrencyBar(
                 detectedAirport = detectedAirport,
                 selectedCurrency = selectedCurrency,
-                onRequestGpsLocation = {
-                    if (NearestAirportLocator.hasLocationPermission(context)) {
-                        val result = NearestAirportLocator.detectNearestAirport(context)
-                        localOrigin = result.airport.iataCode
-                        onDetectNearestAirport(result)
-                    } else {
-                        locationPermissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
-                            )
-                        )
-                    }
-                },
                 onSelectCurrency = onSelectCurrency
             )
         }
@@ -425,12 +437,11 @@ fun SearchAndResultsScreen(
                         destinationIata = localDest,
                         activeAlertCount = priceAlerts.size,
                         onClick = {
+                            showCreateAlertDialog = true
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                                 !PushNotificationHelper.hasNotificationPermission(context)
                             ) {
                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
-                                showCreateAlertDialog = true
                             }
                         }
                     )
@@ -438,21 +449,33 @@ fun SearchAndResultsScreen(
             }
         }
 
-        if (priceAlerts.isNotEmpty()) {
-            item {
-                ActivePriceAlertsBannerCard(
-                    alerts = priceAlerts,
-                    onTriggerPromoSweepNow = onTriggerPromoCronSweep,
-                    onSelectAlertRoute = { alert ->
-                        localOrigin = alert.originIata
-                        localDest = alert.destinationIata
-                        localCabin = alert.cabinClass
-                        onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
-                        onExecuteSearch()
-                    },
-                    onDeleteAlert = onDeletePriceAlert
-                )
-            }
+        item {
+            ActivePriceAlertsBannerCard(
+                alerts = priceAlerts,
+                currentOriginIata = localOrigin,
+                isAutoGlobalRadarEnabled = isAutoGlobalRadarEnabled,
+                onToggleAutoGlobalRadar = { enabled ->
+                    isAutoGlobalRadarEnabled = enabled
+                    PushNotificationHelper.setGlobalAutoPromoRadarEnabled(context, enabled)
+                    if (enabled) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            !PushNotificationHelper.hasNotificationPermission(context)
+                        ) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            onTriggerPromoCronSweep()
+                        }
+                    }
+                },
+                onSelectAlertRoute = { alert ->
+                    localOrigin = alert.originIata
+                    localDest = alert.destinationIata
+                    localCabin = alert.cabinClass
+                    onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                    onExecuteSearch()
+                },
+                onDeleteAlert = onDeletePriceAlert
+            )
         }
 
         item {

@@ -1,6 +1,6 @@
 {
-  "summary": "Plano opcional para adicionar suporte ao Secret GOOGLE_SERVICES_JSON no GitHub Actions e um botão de diagnóstico/teste de Notificações Push (FCM) na tela de Perfil do AguiaFly.",
-  "updatedAt": "2026-11-02T21:05:44.498916335Z",
+  "summary": "Plano de implementação para corrigir o layout responsivo dos cartões de voo, adicionar Ibiza (IBZ) e novos aeroportos europeus ao detector de GPS, implementar o Radar Global Automático de Super Promoções via Push Notification e tornar os carimbos do Passaporte 100% automáticos na emissão do bilhete com galeria de até 15 fotos por carimbo.",
+  "updatedAt": "2026-11-02T21:54:48.710940921Z",
   "requestFeedback": true,
   "userFacing": true
 }

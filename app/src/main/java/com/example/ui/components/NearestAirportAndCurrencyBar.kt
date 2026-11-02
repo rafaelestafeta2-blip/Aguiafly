@@ -34,7 +34,6 @@ import com.example.domain.pricing.DisplayCurrency
 fun NearestAirportAndCurrencyBar(
     detectedAirport: DetectedAirportResult?,
     selectedCurrency: DisplayCurrency,
-    onRequestGpsLocation: () -> Unit,
     onSelectCurrency: (DisplayCurrency) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -52,79 +51,45 @@ fun NearestAirportAndCurrencyBar(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Linha 1: Aeroporto mais próximo detectado + Botão GPS
+            // Linha 1: Aeroporto mais próximo detectado automaticamente
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                    modifier = Modifier.size(34.dp)
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.MyLocation,
-                                contentDescription = "Localização",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                    Column {
-                        Text(
-                            text = if (detectedAirport != null) {
-                                "Saída mais próxima: ${detectedAirport.airport.cityName} (${detectedAirport.airport.iataCode})"
-                            } else {
-                                "Detectando aeroporto mais próximo de si..."
-                            },
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = detectedAirport?.let {
-                                "${it.airport.airportName} • ${it.detectionSource}"
-                            } ?: "Toque em GPS para usar sua localização exata",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = "Localização Automática",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
-
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onRequestGpsLocation() }
-                        .testTag("detect_gps_airport_button")
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MyLocation,
-                            contentDescription = "Atualizar GPS",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "GPS",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (detectedAirport != null) {
+                            "Saída mais próxima: ${detectedAirport.airport.cityName} (${detectedAirport.airport.iataCode})"
+                        } else {
+                            "Localizando aeroporto mais próximo automaticamente..."
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = detectedAirport?.let {
+                            "${it.airport.airportName} • ${it.detectionSource}"
+                        } ?: "Sincronização GPS automática ativa",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
                 }
             }
 

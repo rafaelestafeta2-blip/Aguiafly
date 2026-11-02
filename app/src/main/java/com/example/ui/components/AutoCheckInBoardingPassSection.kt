@@ -193,7 +193,7 @@ fun AutoCheckInBoardingPassSection(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Simular Abertura da Janela & Gerar Cartão de Embarque Agora",
+                    text = "Emitir Cartão de Embarque Antecipado",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold
                 )

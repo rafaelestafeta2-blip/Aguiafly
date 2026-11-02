@@ -39,7 +39,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.BodyType
 import com.example.data.model.EnrichedFlightOffer
 import com.example.domain.concierge.AirportAndLoyaltyCatalog
@@ -71,7 +74,7 @@ fun FlightOfferCard(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(20.dp))
             .border(
                 width = 1.dp,
                 brush = Brush.horizontalGradient(
@@ -81,11 +84,11 @@ fun FlightOfferCard(
                         champagneGold.copy(alpha = 0.65f)
                     )
                 ),
-                shape = RoundedCornerShape(22.dp)
+                shape = RoundedCornerShape(20.dp)
             )
             .clickable { onSelectOffer(offer) }
             .testTag("flight_offer_card_${offer.flightNumber}"),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(20.dp),
         color = Color.Transparent,
         tonalElevation = 8.dp
     ) {
@@ -100,18 +103,25 @@ fun FlightOfferCard(
                         )
                     )
                 )
-                .padding(18.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // 1. Cabeçalho Horizontal: Companhia + Código à esquerda (weight 1f) e Preço Total à direita (sem quebra)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .background(
                                 Brush.linearGradient(
                                     colors = listOf(
@@ -120,26 +130,39 @@ fun FlightOfferCard(
                                     )
                                 )
                             )
-                            .border(1.dp, emblemAccent.copy(alpha = 0.8f), RoundedCornerShape(12.dp)),
+                            .border(1.dp, emblemAccent.copy(alpha = 0.8f), RoundedCornerShape(10.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = airlineIdentity.emblemMonogram,
                             style = MaterialTheme.typography.labelLarge,
                             color = champagneGold,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = offer.airlineName,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             Text(
-                                text = offer.airlineName,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.Bold
+                                text = "${offer.flightNumber} • ${offer.cabinClass.uppercase()}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
                                 color = champagneGold.copy(alpha = 0.16f)
@@ -147,31 +170,13 @@ fun FlightOfferCard(
                                 Text(
                                     text = airlineIdentity.allianceName,
                                     style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
                                     color = champagneGold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                 )
                             }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "${offer.flightNumber} • ${offer.cabinClass.uppercase()}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.Eco,
-                                contentDescription = null,
-                                tint = emerald,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text(
-                                text = "-${airlineIdentity.co2ReductionPercent}% CO₂",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = emerald,
-                                fontWeight = FontWeight.SemiBold
-                            )
                         }
                     }
                 }
@@ -180,157 +185,259 @@ fun FlightOfferCard(
                     Text(
                         text = MarkupEngine.formatEur(offer.pricing.displayFareBeforeAncillariesEur),
                         style = MaterialTheme.typography.titleLarge,
+                        fontSize = 20.sp,
                         color = champagneGold,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        softWrap = false
                     )
-                    Text(
-                        text = "Base ${MarkupEngine.formatEur(offer.netFareEur)} + Taxa Gestão ${MarkupEngine.formatEur(offer.pricing.totalMarkupEur)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = aeroCyan
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Eco,
+                            contentDescription = null,
+                            tint = emerald,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            text = "-${airlineIdentity.co2ReductionPercent}% CO₂",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            color = emerald,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            // 2. Linha Dedicada de Horários (Partida ➔ Duração/Escalas ➔ Chegada) com espaço amplo
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                        RoundedCornerShape(14.dp)
+                    )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Coluna Partida
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = offer.departureTimeFormatted,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            text = offer.originIata,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = champagneGold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            text = offer.originCity,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
+                    // Coluna Central: Duração + Rota + Badge Direto/Escalas
+                    Column(
+                        modifier = Modifier.padding(horizontal = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = offer.durationFormatted,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .width(24.dp)
+                                    .height(1.5.dp)
+                                    .background(badgeColor.copy(alpha = 0.6f))
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            if (isDirect) {
+                                Icon(
+                                    imageVector = Icons.Default.FlightTakeoff,
+                                    contentDescription = "Voo Direto",
+                                    tint = emerald,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    repeat(offer.stopsCount.coerceAtMost(3)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(7.dp)
+                                                .clip(CircleShape)
+                                                .background(champagneGold)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .width(24.dp)
+                                    .height(1.5.dp)
+                                    .background(badgeColor.copy(alpha = 0.6f))
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = badgeColor.copy(alpha = 0.16f),
+                            modifier = Modifier
+                                .border(1.dp, badgeColor.copy(alpha = 0.65f), RoundedCornerShape(50))
+                                .testTag("flight_stops_badge_${offer.flightNumber}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (isDirect) Icons.Default.FlightTakeoff else Icons.Default.ConnectingAirports,
+                                    contentDescription = null,
+                                    tint = badgeColor,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = offer.stopsBadgeLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = badgeColor,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.testTag("flight_connection_time_${offer.flightNumber}")
+                        ) {
+                            if (!isDirect) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = null,
+                                    tint = aeroCyan,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                            }
+                            Text(
+                                text = offer.connectionTimeBadgeLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                color = if (isDirect) emerald else aeroCyan,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+
+                    // Coluna Chegada
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = offer.arrivalTimeFormatted,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            text = offer.destinationIata,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = champagneGold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            text = offer.destinationCity,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                }
+            }
+
+            // 3. Linha de Transparência Tarifária (Base + Taxa de Gestão em linha limpa)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = offer.departureTimeFormatted,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                Text(
+                    text = "Base ${MarkupEngine.formatEur(offer.netFareEur)} + Taxa Gestão ${MarkupEngine.formatEur(offer.pricing.totalMarkupEur)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = aeroCyan,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Wifi,
+                        contentDescription = "Wi-Fi a bordo",
+                        tint = aeroCyan,
+                        modifier = Modifier.size(14.dp)
                     )
-                    Text(
-                        text = "${offer.originIata} • ${offer.originCity}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Text(
-                        text = "Tempo total: ${offer.durationFormatted}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    // Visual Route Line with Stopover Markers
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .width(34.dp)
-                                .height(1.5.dp)
-                                .background(badgeColor.copy(alpha = 0.6f))
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        if (isDirect) {
-                            Icon(
-                                imageVector = Icons.Default.FlightTakeoff,
-                                contentDescription = "Voo Direto",
-                                tint = emerald,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        } else {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                repeat(offer.stopsCount.coerceAtMost(3)) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(champagneGold)
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Box(
-                            modifier = Modifier
-                                .width(34.dp)
-                                .height(1.5.dp)
-                                .background(badgeColor.copy(alpha = 0.6f))
-                        )
-                    }
-
-                    // Prominent Badge indicating "Direto" or "X Escala(s)"
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = badgeColor.copy(alpha = 0.16f),
-                        modifier = Modifier
-                            .border(1.dp, badgeColor.copy(alpha = 0.65f), RoundedCornerShape(50))
-                            .testTag("flight_stops_badge_${offer.flightNumber}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (isDirect) Icons.Default.FlightTakeoff else Icons.Default.ConnectingAirports,
-                                contentDescription = null,
-                                tint = badgeColor,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = offer.stopsBadgeLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = badgeColor,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // Total Connection Time label
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.testTag("flight_connection_time_${offer.flightNumber}")
-                    ) {
-                        if (!isDirect) {
-                            Icon(
-                                imageVector = Icons.Default.Schedule,
-                                contentDescription = null,
-                                tint = aeroCyan,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-                        Text(
-                            text = offer.connectionTimeBadgeLabel,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isDirect) emerald else aeroCyan,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = offer.arrivalTimeFormatted,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "${offer.destinationIata} • ${offer.destinationCity}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Icon(
+                        imageVector = Icons.Default.Luggage,
+                        contentDescription = "Bagagem incluída",
+                        tint = champagneGold,
+                        modifier = Modifier.size(14.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
 
+            // 4. Aeronave & Amenidades Compactas
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -345,42 +452,27 @@ fun FlightOfferCard(
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Default.AirlineSeatFlat,
                             contentDescription = "Aeronave",
                             tint = champagneGold,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "${offer.aircraftSpec.fullName} • ${offer.aircraftSpec.cabinLayoutBusiness}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Wifi,
-                        contentDescription = "Wi-Fi a bordo",
-                        tint = aeroCyan,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Default.Luggage,
-                        contentDescription = "Bagagem incluída",
-                        tint = champagneGold,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -401,17 +493,20 @@ fun FlightOfferCard(
                             text = "✦ $amenity",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "${offer.includedBaggageSummary} • ${offer.cancellationPolicySummary}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

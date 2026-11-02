@@ -55,18 +55,41 @@ object NearestAirportLocator {
         GeoAirportCoordinate("FAO", "Faro", "Gago Coutinho Algarve", "Portugal", 37.0144, -7.9659),
         GeoAirportCoordinate("FNC", "Funchal", "Cristiano Ronaldo Madeira", "Portugal", 32.6979, -16.7745),
         GeoAirportCoordinate("PDL", "Ponta Delgada", "João Paulo II Açores", "Portugal", 37.7412, -25.6979),
-        // Europa & Mundo
-        GeoAirportCoordinate("MAD", "Madrid", "Adolfo Suárez Barajas", "Espanha", 40.4983, -3.5676),
+        // Espanha & Ilhas Baleares / Canárias
+        GeoAirportCoordinate("IBZ", "Ibiza", "Aeroport d'Eivissa Es Codolar", "Espanha", 38.8729, 1.3731),
+        GeoAirportCoordinate("PMI", "Palma de Maiorca", "Son Sant Joan", "Espanha", 39.5517, 2.7388),
+        GeoAirportCoordinate("MAH", "Menorca", "Aeroporto de Menorca", "Espanha", 39.8626, 4.2186),
         GeoAirportCoordinate("BCN", "Barcelona", "Josep Tarradellas El Prat", "Espanha", 41.2974, 2.0833),
+        GeoAirportCoordinate("MAD", "Madrid", "Adolfo Suárez Barajas", "Espanha", 40.4983, -3.5676),
+        GeoAirportCoordinate("VLC", "Valência", "Aeroporto de Valência Manises", "Espanha", 39.4893, -0.4816),
+        GeoAirportCoordinate("ALC", "Alicante", "Alicante-Elche Miguel Hernández", "Espanha", 38.2822, -0.5582),
+        GeoAirportCoordinate("AGP", "Málaga", "Costa del Sol", "Espanha", 36.6749, -4.4991),
+        GeoAirportCoordinate("SVQ", "Sevilha", "Aeroporto de Sevilha San Pablo", "Espanha", 37.4180, -5.8931),
+        GeoAirportCoordinate("BIO", "Bilbau", "Aeroporto de Bilbau", "Espanha", 43.3011, -2.9106),
+        GeoAirportCoordinate("TFS", "Tenerife", "Tenerife Sul Reina Sofía", "Espanha", 28.0445, -16.5725),
+        GeoAirportCoordinate("LPA", "Gran Canária", "Aeroporto de Gran Canária", "Espanha", 27.9319, -15.3866),
+        // Europa & Mundo
         GeoAirportCoordinate("CDG", "Paris", "Charles de Gaulle", "França", 49.0097, 2.5479),
         GeoAirportCoordinate("ORY", "Paris", "Orly", "França", 48.7262, 2.3652),
+        GeoAirportCoordinate("NCE", "Nice", "Côte d'Azur", "França", 43.6584, 7.2159),
         GeoAirportCoordinate("LHR", "Londres", "Heathrow", "Reino Unido", 51.4700, -0.4543),
+        GeoAirportCoordinate("LGW", "Londres", "Gatwick", "Reino Unido", 51.1537, -0.1821),
         GeoAirportCoordinate("DUB", "Dublin", "Dublin International", "Irlanda", 53.4264, -6.2499),
         GeoAirportCoordinate("FCO", "Roma", "Leonardo da Vinci Fiumicino", "Itália", 41.8003, 12.2389),
         GeoAirportCoordinate("MXP", "Milão", "Malpensa", "Itália", 45.6301, 8.7255),
+        GeoAirportCoordinate("LIN", "Milão", "Linate", "Itália", 45.4451, 9.2767),
+        GeoAirportCoordinate("VCE", "Veneza", "Marco Polo", "Itália", 45.5053, 12.3519),
         GeoAirportCoordinate("ZRH", "Zurique", "Zurich Kloten", "Suíça", 47.4582, 8.5555),
+        GeoAirportCoordinate("GVA", "Genebra", "Genève Cointrin", "Suíça", 46.2381, 6.1089),
         GeoAirportCoordinate("AMS", "Amsterdão", "Schiphol", "Países Baixos", 52.3105, 4.7683),
+        GeoAirportCoordinate("BRU", "Bruxelas", "Zaventem", "Bélgica", 50.9010, 4.4856),
         GeoAirportCoordinate("FRA", "Frankfurt", "Frankfurt Main", "Alemanha", 50.0379, 8.5622),
+        GeoAirportCoordinate("MUC", "Munique", "Franz Josef Strauss", "Alemanha", 48.3537, 11.7750),
+        GeoAirportCoordinate("BER", "Berlim", "Brandenburg", "Alemanha", 52.3667, 13.5033),
+        GeoAirportCoordinate("VIE", "Viena", "Schwechat International", "Áustria", 48.1103, 16.5697),
+        GeoAirportCoordinate("ATH", "Atenas", "Eleftherios Venizelos", "Grécia", 37.9364, 23.9445),
+        GeoAirportCoordinate("PRG", "Praga", "Václav Havel", "Chéquia", 50.1008, 14.2600),
+        GeoAirportCoordinate("CPH", "Copenhaga", "Kastrup", "Dinamarca", 55.6180, 12.6508),
         GeoAirportCoordinate("DXB", "Dubai", "Dubai International", "Emirados Árabes Unidos", 25.2532, 55.3657),
         GeoAirportCoordinate("JFK", "Nova Iorque", "John F. Kennedy", "Estados Unidos", 40.6413, -73.7781),
         GeoAirportCoordinate("MIA", "Miami", "Miami International", "Estados Unidos", 25.7959, -80.2870)
@@ -95,20 +118,72 @@ object NearestAirportLocator {
         return detectByTimezoneAndLocale()
     }
 
+    /**
+     * Solicita leitura ativa do GPS/Rede caso o cache do Android esteja vazio ou desatualizado,
+     * resolvendo com precisão aeroportos insulares como Ibiza (IBZ).
+     */
+    @SuppressLint("MissingPermission")
+    fun requestActiveGpsAirportUpdate(
+        context: Context,
+        onResult: (DetectedAirportResult) -> Unit
+    ) {
+        val immediate = detectNearestAirport(context)
+        onResult(immediate)
+
+        if (!hasLocationPermission(context)) return
+        try {
+            val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                ?: return
+            val provider = when {
+                runCatching { manager.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false) ->
+                    LocationManager.GPS_PROVIDER
+                runCatching { manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false) ->
+                    LocationManager.NETWORK_PROVIDER
+                else -> null
+            } ?: return
+
+            val listener = object : android.location.LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    runCatching { manager.removeUpdates(this) }
+                    onResult(findClosestByCoordinates(location.latitude, location.longitude))
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {}
+            }
+            manager.requestLocationUpdates(
+                provider,
+                0L,
+                0f,
+                listener,
+                android.os.Looper.getMainLooper()
+            )
+        } catch (_: Exception) {
+            // Mantém resultado imediato
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun getBestLastKnownLocation(context: Context): Location? {
         return try {
             val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
                 ?: return null
-            val providers = listOf(
+            val defaultProviders = listOf(
+                "fused",
                 LocationManager.GPS_PROVIDER,
                 LocationManager.NETWORK_PROVIDER,
                 LocationManager.PASSIVE_PROVIDER
             )
+            val allProviders = (runCatching { manager. allProviders }.getOrDefault(emptyList()) + defaultProviders).distinct()
             var bestLocation: Location? = null
-            for (provider in providers) {
+            for (provider in allProviders) {
                 val loc = runCatching { manager.getLastKnownLocation(provider) }.getOrNull() ?: continue
-                if (bestLocation == null || loc.accuracy < bestLocation.accuracy) {
+                if (bestLocation == null ||
+                    loc.time > bestLocation.time + 120_000L ||
+                    (loc.accuracy > 0f && loc.accuracy < bestLocation.accuracy)
+                ) {
                     bestLocation = loc
                 }
             }
@@ -148,17 +223,18 @@ object NearestAirportLocator {
             tzId.contains("Recife", ignoreCase = true) -> "REC"
             tzId.contains("Bahia", ignoreCase = true) -> "SSA"
             tzId.contains("Lisbon", ignoreCase = true) -> "LIS"
-            tzId.contains("Madrid", ignoreCase = true) -> "MAD"
+            tzId.contains("Canary", ignoreCase = true) -> "TFS"
+            tzId.contains("Madrid", ignoreCase = true) -> "IBZ"
             tzId.contains("Paris", ignoreCase = true) -> "CDG"
             tzId.contains("London", ignoreCase = true) -> "LHR"
             tzId.contains("Rome", ignoreCase = true) -> "FCO"
             tzId.contains("New_York", ignoreCase = true) -> "JFK"
             country == "BR" -> "GRU"
             country == "PT" -> "LIS"
-            country == "ES" -> "MAD"
+            country == "ES" -> "IBZ"
             country == "FR" -> "CDG"
             country == "US" -> "JFK"
-            else -> "GRU"
+            else -> "LIS"
         }
 
         val airport = PlaceAutocompleteCatalog.resolveByIata(resolvedIata)

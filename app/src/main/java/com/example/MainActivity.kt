@@ -1,9 +1,13 @@
 package com.example
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -80,6 +84,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         configureAppCheck(this, intent)
         PushNotificationHelper.ensureNotificationChannel(this)
+        PushNotificationHelper.scheduleBackgroundGlobalPromoRadar(this)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -93,6 +98,26 @@ class MainActivity : ComponentActivity() {
 fun AppNavigation() {
     var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
     var showIntroSplash by remember { mutableStateOf(true) }
+
+    val startupPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        // Permissões de Localização, Notificações Push e Câmara processadas automaticamente ao abrir o app
+    }
+
+    LaunchedEffect(showIntroSplash) {
+        if (!showIntroSplash) {
+            val permissions = buildList {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                add(Manifest.permission.CAMERA)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }.toTypedArray()
+            startupPermissionsLauncher.launch(permissions)
+        }
+    }
 
     DisposableEffect(Unit) {
         val listener = FirebaseAuth.AuthStateListener { auth ->
@@ -181,6 +206,7 @@ fun AetherAuthenticatedShell(
     val tickets by bookingViewModel.issuedTickets.collectAsStateWithLifecycle()
     val statusBanner by bookingViewModel.statusBanner.collectAsStateWithLifecycle()
     val promotionalDeals by bookingViewModel.promotionalDeals.collectAsStateWithLifecycle()
+    val autoDetectedPromoDeal by bookingViewModel.autoDetectedPromoDeal.collectAsStateWithLifecycle()
     val isRefreshingPromos by bookingViewModel.isRefreshingPromos.collectAsStateWithLifecycle()
     val detectedAirport by bookingViewModel.detectedAirport.collectAsStateWithLifecycle()
     val selectedCurrency by bookingViewModel.selectedCurrency.collectAsStateWithLifecycle()
@@ -193,6 +219,17 @@ fun AetherAuthenticatedShell(
 
     val chatHistory by aiViewModel.chatHistory.collectAsStateWithLifecycle()
     val aiState by aiViewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(autoDetectedPromoDeal) {
+        autoDetectedPromoDeal?.let { deal ->
+            PushNotificationHelper.triggerAutoGlobalPromoRadarIfEligible(
+                context = context,
+                currentOriginIata = origin,
+                deals = listOf(deal)
+            )
+            bookingViewModel.consumeAutoDetectedPromoDeal()
+        }
+    }
 
     LaunchedEffect(statusBanner) {
         statusBanner?.let { msg ->
@@ -311,17 +348,25 @@ fun AetherAuthenticatedShell(
                     },
                     onDeletePriceAlert = bookingViewModel::deleteRoutePriceAlert,
                     onTriggerPromoCronSweep = {
-                        bookingViewModel.runPromotionalFareCronSweep { alert, promoPriceEur, airlineName ->
-                            PushNotificationHelper.showPromotionalPriceNotification(
-                                context = context,
-                                originIata = alert.originIata,
-                                destinationIata = alert.destinationIata,
-                                cabinClass = alert.cabinClass,
-                                promoPriceEur = promoPriceEur,
-                                baselinePriceEur = alert.baselinePriceEur,
-                                airlineName = airlineName
-                            )
-                        }
+                        bookingViewModel.runPromotionalFareCronSweep(
+                            onPromoFound = { alert, promoPriceEur, airlineName ->
+                                PushNotificationHelper.showPromotionalPriceNotification(
+                                    context = context,
+                                    originIata = alert.originIata,
+                                    destinationIata = alert.destinationIata,
+                                    cabinClass = alert.cabinClass,
+                                    promoPriceEur = promoPriceEur,
+                                    baselinePriceEur = alert.baselinePriceEur,
+                                    airlineName = airlineName
+                                )
+                            },
+                            onGlobalCountryDealTriggered = { deal ->
+                                PushNotificationHelper.showAutomaticGlobalCountryPromoNotification(
+                                    context = context,
+                                    deal = deal
+                                )
+                            }
+                        )
                     },
                     onSelectOfferForCheckout = { offer ->
                         bookingViewModel.selectOffer(offer, resetAncillaries = true)

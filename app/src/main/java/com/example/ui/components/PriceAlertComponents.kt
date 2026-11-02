@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -25,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -34,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.model.PriceAlertSubscription
 import com.example.domain.pricing.MarkupEngine
@@ -68,14 +71,16 @@ fun CreatePriceAlertActionButton(
             imageVector = if (activeAlertCount > 0) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
             contentDescription = "Criar Alerta de Preço",
             tint = aeroCyan,
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(18.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "Criar Alerta de Preço ($originIata ➔ $destinationIata)",
+            text = "Alerta Específico ($originIata ➔ $destinationIata)",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -83,13 +88,13 @@ fun CreatePriceAlertActionButton(
 @Composable
 fun ActivePriceAlertsBannerCard(
     alerts: List<PriceAlertSubscription>,
-    onTriggerPromoSweepNow: () -> Unit,
     onSelectAlertRoute: (PriceAlertSubscription) -> Unit,
     onDeleteAlert: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    currentOriginIata: String = "IBZ",
+    isAutoGlobalRadarEnabled: Boolean = true,
+    onToggleAutoGlobalRadar: (Boolean) -> Unit = {}
 ) {
-    if (alerts.isEmpty()) return
-
     val champagneGold = MaterialTheme.colorScheme.primary
     val aeroCyan = MaterialTheme.colorScheme.secondary
     val emerald = MaterialTheme.colorScheme.tertiary
@@ -109,112 +114,117 @@ fun ActivePriceAlertsBannerCard(
             .testTag("active_price_alerts_card")
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Cabeçalho do Radar Global Automático (Multi-Países)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
                     Icon(
-                        imageVector = Icons.Default.NotificationsActive,
+                        imageVector = Icons.Default.Public,
                         contentDescription = null,
                         tint = champagneGold,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Radar de Promoções & Push FCM (${alerts.size})",
+                            text = "Radar Push Automático Multi-Países",
                             style = MaterialTheme.typography.titleSmall,
                             color = champagneGold,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Monitorização automática de tarifas em tempo real",
+                            text = if (isAutoGlobalRadarEnabled) {
+                                "Monitoramento automático de tarifas aéreas saindo de $currentOriginIata"
+                            } else {
+                                "Notificações automáticas de promoções pausadas"
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isAutoGlobalRadarEnabled) emerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = aeroCyan.copy(alpha = 0.18f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .border(1.dp, aeroCyan.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
-                        .clickable { onTriggerPromoSweepNow() }
-                        .testTag("run_promo_cron_now_button")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Radar,
-                            contentDescription = "Simular varredura cron",
-                            tint = aeroCyan,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Varredura Push",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = aeroCyan,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+                Switch(
+                    checked = isAutoGlobalRadarEnabled,
+                    onCheckedChange = onToggleAutoGlobalRadar,
+                    modifier = Modifier.testTag("toggle_auto_global_radar_switch")
+                )
             }
 
-            alerts.forEachIndexed { idx, alert ->
-                if (idx > 0) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onSelectAlertRoute(alert) }
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (alerts.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+                Text(
+                    text = "Rotas Específicas Vigiadas (${alerts.size}):",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = champagneGold,
+                    fontWeight = FontWeight.Bold
+                )
+                alerts.forEachIndexed { idx, alert ->
+                    if (idx > 0) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onSelectAlertRoute(alert) }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "${alert.originIata} ➔ ${alert.destinationIata}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Bold,
+                                    softWrap = false
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "• ${alert.cabinClass.uppercase()}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = aeroCyan,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Text(
-                                text = "${alert.originIata} ➔ ${alert.destinationIata}",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "• ${alert.cabinClass.uppercase()}",
+                                text = "Meta Push: ≤ ${MarkupEngine.formatEur(alert.targetMaxPriceEur)} • Atual: ${MarkupEngine.formatEur(alert.lastObservedPriceEur)}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = aeroCyan
+                                color = if (alert.promoTriggered) emerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (alert.promoTriggered) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Text(
-                            text = "Meta Push: ≤ ${MarkupEngine.formatEur(alert.targetMaxPriceEur)} • Atual: ${MarkupEngine.formatEur(alert.lastObservedPriceEur)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (alert.promoTriggered) emerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (alert.promoTriggered) FontWeight.Bold else FontWeight.Normal
-                        )
-                    }
 
-                    IconButton(
-                        onClick = { onDeleteAlert(alert.id) },
-                        modifier = Modifier.testTag("delete_price_alert_${alert.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Remover alerta",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        IconButton(
+                            onClick = { onDeleteAlert(alert.id) },
+                            modifier = Modifier.testTag("delete_price_alert_${alert.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Remover alerta",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

@@ -468,13 +468,18 @@ fun ImmigrationStampBadge(
 fun PassportVisaPageStampCard(
     stamp: PassportTravelStamp,
     onPickDestinationPhoto: () -> Unit,
-    onDeleteManualStamp: (() -> Unit)?,
+    onDeleteManualStamp: (() -> Unit)? = null,
+    onRemovePhotoUri: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val photos = stamp.photoUris.ifEmpty { listOfNotNull(stamp.photoUri) }
+    var selectedIdx by remember(photos) { mutableStateOf(0) }
+    val activePhoto = photos.getOrNull(selectedIdx) ?: photos.firstOrNull()
+
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFFFBF7EE) // Papel moeda creme de página de passaporte
+            containerColor = Color(0xFFFBF7EE)
         ),
         modifier = modifier
             .fillMaxWidth()
@@ -496,28 +501,15 @@ fun PassportVisaPageStampCard(
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF1E293B),
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
-                if (stamp.isFromIssuedTicket) {
-                    Icon(
-                        imageVector = Icons.Default.Verified,
-                        contentDescription = "Bilhete Emitido",
-                        tint = Color(0xFF0D9488),
-                        modifier = Modifier.size(16.dp)
-                    )
-                } else if (onDeleteManualStamp != null) {
-                    IconButton(
-                        onClick = onDeleteManualStamp,
-                        modifier = Modifier.size(22.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Remover carimbo",
-                            tint = Color(0xFF64748B),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
+                Icon(
+                    imageVector = Icons.Default.Verified,
+                    contentDescription = "Bilhete Emitido",
+                    tint = Color(0xFF0D9488),
+                    modifier = Modifier.size(16.dp)
+                )
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -531,27 +523,46 @@ fun PassportVisaPageStampCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Mini foto da viagem na folha do passaporte
+            // Mini foto principal da viagem na folha do passaporte
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(84.dp)
+                    .height(88.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(
                         Brush.linearGradient(
                             listOf(Color(0xFF0F203C), Color(0xFF1E3A5F))
                         )
                     )
-                    .clickable { onPickDestinationPhoto() },
+                    .clickable {
+                        if (photos.size < com.example.data.model.MAX_PHOTOS_PER_STAMP) {
+                            onPickDestinationPhoto()
+                        }
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                if (!stamp.photoUri.isNullOrBlank()) {
+                if (!activePhoto.isNullOrBlank()) {
                     AsyncImage(
-                        model = Uri.parse(stamp.photoUri),
+                        model = Uri.parse(activePhoto),
                         contentDescription = "Foto de ${stamp.cityName}",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
+                    Surface(
+                        color = Color(0xCC060D1A),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                    ) {
+                        Text(
+                            text = "📸 ${photos.size}/${com.example.data.model.MAX_PHOTOS_PER_STAMP}",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFE5B84B),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        )
+                    }
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -565,7 +576,7 @@ fun PassportVisaPageStampCard(
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            text = "Adicionar Foto de ${stamp.cityName}",
+                            text = "Adicionar até 15 Fotos (${photos.size}/15)",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
@@ -575,9 +586,59 @@ fun PassportVisaPageStampCard(
                 }
             }
 
+            if (photos.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    photos.forEachIndexed { idx, uriStr ->
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .border(
+                                    width = if (idx == selectedIdx) 1.5.dp else 0.5.dp,
+                                    color = if (idx == selectedIdx) Color(0xFF0D9488) else Color(0xFF94A3B8),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .clickable { selectedIdx = idx }
+                        ) {
+                            AsyncImage(
+                                model = Uri.parse(uriStr),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                    if (photos.size < com.example.data.model.MAX_PHOTOS_PER_STAMP) {
+                        Surface(
+                            color = Color(0xFF0F203C),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clickable { onPickDestinationPhoto() }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AddAPhoto,
+                                    contentDescription = "Adicionar mais fotos",
+                                    tint = Color(0xFFE5B84B),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "${stamp.flightNumber} • ${stamp.airlineName}",
+                text = "PNR ${stamp.bookingReference} • ${stamp.flightNumber}",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF334155),
@@ -589,41 +650,46 @@ fun PassportVisaPageStampCard(
 }
 
 /**
- * Cartão completo da Linha do Tempo & Galeria com foto grande do destino,
- * carimbo de imigração sobreposto, bandeira do país e detalhes do voo.
+ * Cartão completo da Linha do Tempo & Galeria com suporte para até 15 fotos reais por carimbo emitido,
+ * carimbo de imigração sobreposto, bandeira do país e detalhes do bilhete oficial.
  */
 @Composable
 fun PassportTimelineGalleryCard(
     stamp: PassportTravelStamp,
     onPickDestinationPhoto: () -> Unit,
-    onDeleteManualStamp: (() -> Unit)?,
+    onDeleteManualStamp: (() -> Unit)? = null,
+    onRemovePhotoUri: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val photos = stamp.photoUris.ifEmpty { listOfNotNull(stamp.photoUri) }
+    var selectedIdx by remember(photos) { mutableStateOf(0) }
+    val activePhoto = photos.getOrNull(selectedIdx) ?: photos.firstOrNull()
+
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Eixo vertical da Linha do Tempo
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.width(34.dp)
+            modifier = Modifier.width(32.dp)
         ) {
             Surface(
                 color = MaterialTheme.colorScheme.primary,
                 shape = CircleShape,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(30.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = stamp.countryFlagEmoji,
-                        fontSize = 16.sp
+                        fontSize = 15.sp
                     )
                 }
             }
             Box(
                 modifier = Modifier
                     .width(2.dp)
-                    .height(210.dp)
+                    .height(230.dp)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
             )
         }
@@ -646,17 +712,21 @@ fun PassportTimelineGalleryCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(165.dp)
+                        .height(170.dp)
                         .background(
                             Brush.linearGradient(
                                 listOf(Color(0xFF0B192E), Color(0xFF1F3A60), Color(0xFF102542))
                             )
                         )
-                        .clickable { onPickDestinationPhoto() }
+                        .clickable {
+                            if (photos.size < com.example.data.model.MAX_PHOTOS_PER_STAMP) {
+                                onPickDestinationPhoto()
+                            }
+                        }
                 ) {
-                    if (!stamp.photoUri.isNullOrBlank()) {
+                    if (!activePhoto.isNullOrBlank()) {
                         AsyncImage(
-                            model = Uri.parse(stamp.photoUri),
+                            model = Uri.parse(activePhoto),
                             contentDescription = "Foto da viagem para ${stamp.cityName}",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -670,12 +740,27 @@ fun PassportTimelineGalleryCard(
                                     )
                                 )
                         )
+                        Surface(
+                            color = Color(0xD9060D1A),
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = "📸 Foto ${selectedIdx + 1} de ${photos.size} (Máx ${com.example.data.model.MAX_PHOTOS_PER_STAMP})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE5B84B),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                     } else {
                         // Postal ilustrado do destino quando ainda não tem foto da galeria
                         Column(
                             modifier = Modifier
                                 .align(Alignment.CenterStart)
-                                .padding(16.dp),
+                                .padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
@@ -686,7 +771,7 @@ fun PassportTimelineGalleryCard(
                             )
                             Text(
                                 text = stamp.cityName,
-                                style = MaterialTheme.typography.headlineSmall,
+                                style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color.White
                             )
@@ -706,7 +791,7 @@ fun PassportTimelineGalleryCard(
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Text(
-                                        text = "Toque para colocar sua foto da viagem",
+                                        text = "Adicionar até 15 fotos desta viagem",
                                         fontSize = 11.sp,
                                         color = Color.White
                                     )
@@ -730,8 +815,89 @@ fun PassportTimelineGalleryCard(
                     }
                 }
 
-                // Rodapé da memória de viagem
-                Column(modifier = Modifier.padding(14.dp)) {
+                // Tira horizontal de miniaturas das fotos (até 15 fotos por carimbo)
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        photos.forEachIndexed { idx, uriStr ->
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .border(
+                                        width = if (idx == selectedIdx) 2.dp else 1.dp,
+                                        color = if (idx == selectedIdx) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.25f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { selectedIdx = idx }
+                            ) {
+                                AsyncImage(
+                                    model = Uri.parse(uriStr),
+                                    contentDescription = "Miniatura ${idx + 1}",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                if (onRemovePhotoUri != null) {
+                                    Surface(
+                                        color = Color(0xCC991B1B),
+                                        shape = CircleShape,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(2.dp)
+                                            .size(16.dp)
+                                            .clickable {
+                                                onRemovePhotoUri(uriStr)
+                                                if (selectedIdx >= photos.size - 1) {
+                                                    selectedIdx = (photos.size - 2).coerceAtLeast(0)
+                                                }
+                                            }
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteOutline,
+                                                contentDescription = "Remover foto",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(11.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (photos.size < com.example.data.model.MAX_PHOTOS_PER_STAMP) {
+                            OutlinedButton(
+                                onClick = onPickDestinationPhoto,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .height(42.dp)
+                                    .testTag("add_stamp_photos_button_${stamp.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AddAPhoto,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "+ Fotos (${photos.size}/${com.example.data.model.MAX_PHOTOS_PER_STAMP})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -739,7 +905,8 @@ fun PassportTimelineGalleryCard(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.FlightLand,
@@ -750,32 +917,46 @@ fun PassportTimelineGalleryCard(
                             Text(
                                 text = "${stamp.cityName} (${stamp.iataCode}) • ${stamp.countryName}",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        if (!stamp.isFromIssuedTicket && onDeleteManualStamp != null) {
-                            IconButton(
-                                onClick = onDeleteManualStamp,
-                                modifier = Modifier.size(28.dp)
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.DeleteOutline,
-                                    contentDescription = "Excluir viagem",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    imageVector = Icons.Default.Verified,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "PNR ${stamp.bookingReference}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
                     }
 
                     Text(
-                        text = "Data do Carimbo: ${CountryPassportCatalog.formatStampDate(stamp.travelDateIso)} • Voo ${stamp.flightNumber} (${stamp.airlineName})",
+                        text = "Carimbo Automático: ${CountryPassportCatalog.formatStampDate(stamp.travelDateIso)} • Voo ${stamp.flightNumber} (${stamp.airlineName})",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
 
                     if (stamp.memoryNote.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = stamp.memoryNote,
                             style = MaterialTheme.typography.bodySmall,

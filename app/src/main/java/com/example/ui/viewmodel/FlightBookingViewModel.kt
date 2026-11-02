@@ -251,6 +251,13 @@ class FlightBookingViewModel(
         }
     }
 
+    private val _autoDetectedPromoDeal = MutableStateFlow<TravelPromotionDeal?>(null)
+    val autoDetectedPromoDeal: StateFlow<TravelPromotionDeal?> = _autoDetectedPromoDeal.asStateFlow()
+
+    fun consumeAutoDetectedPromoDeal() {
+        _autoDetectedPromoDeal.value = null
+    }
+
     fun refreshPromotionalDeals() {
         viewModelScope.launch {
             _isRefreshingPromos.value = true
@@ -258,8 +265,8 @@ class FlightBookingViewModel(
                 val live = flightRepository.fetchLivePromotionalDeals(_originIata.value, markupConfig.value)
                 if (live.isNotEmpty()) {
                     _promotionalDeals.value = live
-                    val originCity = PlaceAutocompleteCatalog.resolveByIata(_originIata.value).cityName
-                    _statusBanner.value = "Promoções saindo de $originCity (${_originIata.value}) atualizadas!"
+                    val bestPromo = live.minByOrNull { it.displayTotalEur } ?: live.first()
+                    _autoDetectedPromoDeal.value = bestPromo
                 }
             } catch (e: Exception) {
                 Log.w("FlightBookingVM", "Erro ao atualizar promoções reais", e)
@@ -316,6 +323,25 @@ class FlightBookingViewModel(
                     markupConfig = markupConfig.value
                 )
                 _rawOffers.value = results
+
+                // Verifica automaticamente se a busca na API encontrou tarifa promocional abaixo da meta dos alertas ativos
+                val cheapestOffer = results.minByOrNull { it.pricing.displayFareBeforeAncillariesEur }
+                if (cheapestOffer != null) {
+                    val priceEur = cheapestOffer.pricing.displayFareBeforeAncillariesEur
+                    priceAlerts.value.forEach { alert ->
+                        if (alert.originIata.equals(_originIata.value, ignoreCase = true) &&
+                            alert.destinationIata.equals(_destinationIata.value, ignoreCase = true) &&
+                            priceEur <= alert.targetMaxPriceEur &&
+                            alert.id.isNotBlank()
+                        ) {
+                            priceAlertRepository.updateObservedPriceAndPromoState(
+                                alertId = alert.id,
+                                observedPriceEur = priceEur,
+                                promoTriggered = true
+                            )
+                        }
+                    }
+                }
             } finally {
                 _isSearching.value = false
             }
@@ -364,15 +390,11 @@ class FlightBookingViewModel(
     }
 
     fun runPromotionalFareCronSweep(
-        onPromoFound: (alert: PriceAlertSubscription, promoPriceEur: Double, airlineName: String) -> Unit
+        onPromoFound: (alert: PriceAlertSubscription, promoPriceEur: Double, airlineName: String) -> Unit,
+        onGlobalCountryDealTriggered: (TravelPromotionDeal) -> Unit = {}
     ) {
         val currentAlerts = priceAlerts.value
-        if (currentAlerts.isEmpty()) {
-            _statusBanner.value = "Crie primeiro um Alerta de Preço para monitorizar promoções."
-            return
-        }
         viewModelScope.launch {
-            var promosTriggeredCount = 0
             currentAlerts.forEach { alert ->
                 val routeOffers = flightRepository.searchFlights(
                     originIata = alert.originIata,
@@ -382,21 +404,30 @@ class FlightBookingViewModel(
                     markupConfig = markupConfig.value
                 )
                 val bestOffer = routeOffers.minByOrNull { it.pricing.displayFareBeforeAncillariesEur }
-                val promoPrice = ((alert.targetMaxPriceEur * 0.94) * 100.0).roundToInt() / 100.0
+                val observedEur = bestOffer?.pricing?.displayFareBeforeAncillariesEur ?: alert.lastObservedPriceEur
                 val airline = bestOffer?.airlineName ?: "TAP Air Portugal NDC"
 
-                if (alert.id.isNotBlank()) {
-                    priceAlertRepository.updateObservedPriceAndPromoState(
-                        alertId = alert.id,
-                        observedPriceEur = promoPrice,
-                        promoTriggered = true
-                    )
+                if (observedEur <= alert.targetMaxPriceEur) {
+                    if (alert.id.isNotBlank()) {
+                        priceAlertRepository.updateObservedPriceAndPromoState(
+                            alertId = alert.id,
+                            observedPriceEur = observedEur,
+                            promoTriggered = true
+                        )
+                    }
+                    onPromoFound(alert, observedEur, airline)
                 }
-                promosTriggeredCount++
-                onPromoFound(alert, promoPrice, airline)
             }
-            if (promosTriggeredCount > 0) {
-                _statusBanner.value = "🔥 $promosTriggeredCount tarifa(s) promocional(is) encontrada(s)! Notificação Push enviada."
+
+            val liveDeals = try {
+                flightRepository.fetchLivePromotionalDeals(_originIata.value, markupConfig.value)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val featuredDeal = liveDeals.minByOrNull { it.displayTotalEur }
+                ?: _promotionalDeals.value.minByOrNull { it.displayTotalEur }
+            if (featuredDeal != null) {
+                onGlobalCountryDealTriggered(featuredDeal)
             }
         }
     }

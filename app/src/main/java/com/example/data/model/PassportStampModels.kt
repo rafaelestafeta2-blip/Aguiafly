@@ -93,6 +93,8 @@ enum class StampInkStyle(
     }
 }
 
+const val MAX_PHOTOS_PER_STAMP = 15
+
 data class PassportTravelStamp(
     val id: String,
     val iataCode: String,
@@ -103,9 +105,10 @@ data class PassportTravelStamp(
     val flightNumber: String,
     val airlineName: String,
     val cabinClass: String,
-    val photoUri: String? = null,
+    val photoUris: List<String> = emptyList(),
+    val photoUri: String? = photoUris.firstOrNull(),
     val memoryNote: String = "",
-    val isFromIssuedTicket: Boolean = false,
+    val isFromIssuedTicket: Boolean = true,
     val bookingReference: String = "",
     val inkStyle: StampInkStyle = StampInkStyle.NAVY_OFFICIAL,
     val rotationDegrees: Float = -4f
@@ -120,6 +123,7 @@ data class LocalProfileVisualState(
     val passportCustomNumber: String = "",
     val manualStamps: List<PassportTravelStamp> = emptyList(),
     val ticketPhotoOverrides: Map<String, String> = emptyMap(),
+    val ticketPhotoLists: Map<String, List<String>> = emptyMap(),
     val ticketNoteOverrides: Map<String, String> = emptyMap()
 )
 
@@ -187,11 +191,15 @@ object CountryPassportCatalog {
         return "$day $monthShort $year"
     }
 
+    /**
+     * Gera carimbos oficiais exclusivamente a partir dos bilhetes comprados/emitidos pelo utilizador,
+     * impedindo carimbos artificiais e permitindo anexar até 15 fotos em cada carimbo de viagem.
+     */
     fun buildCombinedStamps(
         issuedTickets: List<IssuedTicket>,
         visualState: LocalProfileVisualState
     ): List<PassportTravelStamp> {
-        val ticketStamps = issuedTickets.mapIndexed { idx, ticket ->
+        return issuedTickets.mapIndexed { idx, ticket ->
             val destPlace = PlaceAutocompleteCatalog.resolveByIata(ticket.destinationIata)
             val country = destPlace.countryName
             val flag = flagForCountry(country)
@@ -204,6 +212,11 @@ object CountryPassportCatalog {
                 else -> 5f
             }
             val key = ticket.id.ifBlank { ticket.orderId }
+            val multiPhotos = visualState.ticketPhotoLists[key]
+                ?.take(MAX_PHOTOS_PER_STAMP)
+                ?.takeIf { it.isNotEmpty() }
+                ?: listOfNotNull(visualState.ticketPhotoOverrides[key])
+
             PassportTravelStamp(
                 id = "ticket_$key",
                 iataCode = ticket.destinationIata.uppercase(),
@@ -214,18 +227,16 @@ object CountryPassportCatalog {
                 flightNumber = ticket.flightNumber,
                 airlineName = ticket.airlineName,
                 cabinClass = ticket.cabinClass,
-                photoUri = visualState.ticketPhotoOverrides[key],
+                photoUris = multiPhotos,
+                photoUri = multiPhotos.firstOrNull(),
                 memoryNote = visualState.ticketNoteOverrides[key]
-                    ?: "Voo confirmado ${ticket.originIata} → ${ticket.destinationIata} • PNR ${ticket.bookingReference}",
+                    ?: "Carimbo Oficial Automático • Voo ${ticket.originIata} → ${ticket.destinationIata} • PNR ${ticket.bookingReference}",
                 isFromIssuedTicket = true,
                 bookingReference = ticket.bookingReference,
                 inkStyle = ink,
                 rotationDegrees = angle
             )
-        }
-
-        return (ticketStamps + visualState.manualStamps)
-            .sortedByDescending { it.travelDateIso }
+        }.sortedByDescending { it.travelDateIso }
     }
 }
 
@@ -237,36 +248,32 @@ object ProfilePassportStorage {
         val raw = prefs.getString("state_$userId", null) ?: return LocalProfileVisualState()
         return try {
             val json = JSONObject(raw)
-            val manualArr = json.optJSONArray("manualStamps") ?: JSONArray()
-            val manualList = mutableListOf<PassportTravelStamp>()
-            for (i in 0 until manualArr.length()) {
-                val item = manualArr.optJSONObject(i) ?: continue
-                manualList.add(
-                    PassportTravelStamp(
-                        id = item.optString("id", UUID.randomUUID().toString()),
-                        iataCode = item.optString("iataCode", "LIS"),
-                        cityName = item.optString("cityName", "Lisboa"),
-                        countryName = item.optString("countryName", "Portugal"),
-                        countryFlagEmoji = item.optString("countryFlagEmoji", "🇵🇹"),
-                        travelDateIso = item.optString("travelDateIso", "2026-11-15"),
-                        flightNumber = item.optString("flightNumber", "AF-VIP"),
-                        airlineName = item.optString("airlineName", "AguiaFly NDC"),
-                        cabinClass = item.optString("cabinClass", "business"),
-                        photoUri = item.optString("photoUri", "").takeIf { it.isNotBlank() },
-                        memoryNote = item.optString("memoryNote", ""),
-                        isFromIssuedTicket = false,
-                        bookingReference = item.optString("bookingReference", "PASSAPORTE"),
-                        inkStyle = StampInkStyle.fromId(item.optString("inkStyle")),
-                        rotationDegrees = item.optDouble("rotationDegrees", -4.0).toFloat()
-                    )
-                )
-            }
 
             val photoOverridesObj = json.optJSONObject("ticketPhotoOverrides") ?: JSONObject()
             val photoMap = mutableMapOf<String, String>()
             photoOverridesObj.keys().forEach { k ->
                 val v = photoOverridesObj.optString(k, "")
                 if (v.isNotBlank()) photoMap[k] = v
+            }
+
+            val photoListsObj = json.optJSONObject("ticketPhotoLists") ?: JSONObject()
+            val photoListsMap = mutableMapOf<String, List<String>>()
+            photoListsObj.keys().forEach { k ->
+                val arr = photoListsObj.optJSONArray(k) ?: JSONArray()
+                val list = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val uriStr = arr.optString(i, "")
+                    if (uriStr.isNotBlank()) list.add(uriStr)
+                }
+                if (list.isNotEmpty()) {
+                    photoListsMap[k] = list.take(MAX_PHOTOS_PER_STAMP)
+                }
+            }
+            // Migra foto única antiga se ainda não estiver na lista de até 15 fotos
+            photoMap.forEach { (k, singleUri) ->
+                if (photoListsMap[k].isNullOrEmpty() && singleUri.isNotBlank()) {
+                    photoListsMap[k] = listOf(singleUri)
+                }
             }
 
             val noteOverridesObj = json.optJSONObject("ticketNoteOverrides") ?: JSONObject()
@@ -283,8 +290,9 @@ object ProfilePassportStorage {
                 nationality = json.optString("nationality", "PORTUGAL / BRASIL"),
                 memberTierTitle = json.optString("memberTierTitle", "AguiaFly Executive Gold • Passaporte Oficial"),
                 passportCustomNumber = json.optString("passportCustomNumber", ""),
-                manualStamps = manualList,
+                manualStamps = emptyList(),
                 ticketPhotoOverrides = photoMap,
+                ticketPhotoLists = photoListsMap,
                 ticketNoteOverrides = noteMap
             )
         } catch (_: Exception) {
@@ -302,32 +310,17 @@ object ProfilePassportStorage {
             put("memberTierTitle", state.memberTierTitle)
             put("passportCustomNumber", state.passportCustomNumber)
 
-            val manualArr = JSONArray()
-            state.manualStamps.forEach { stamp ->
-                manualArr.put(
-                    JSONObject().apply {
-                        put("id", stamp.id)
-                        put("iataCode", stamp.iataCode)
-                        put("cityName", stamp.cityName)
-                        put("countryName", stamp.countryName)
-                        put("countryFlagEmoji", stamp.countryFlagEmoji)
-                        put("travelDateIso", stamp.travelDateIso)
-                        put("flightNumber", stamp.flightNumber)
-                        put("airlineName", stamp.airlineName)
-                        put("cabinClass", stamp.cabinClass)
-                        put("photoUri", stamp.photoUri ?: "")
-                        put("memoryNote", stamp.memoryNote)
-                        put("bookingReference", stamp.bookingReference)
-                        put("inkStyle", stamp.inkStyle.id)
-                        put("rotationDegrees", stamp.rotationDegrees.toDouble())
-                    }
-                )
-            }
-            put("manualStamps", manualArr)
-
             val photoObj = JSONObject()
             state.ticketPhotoOverrides.forEach { (k, v) -> photoObj.put(k, v) }
             put("ticketPhotoOverrides", photoObj)
+
+            val photoListsObj = JSONObject()
+            state.ticketPhotoLists.forEach { (k, list) ->
+                val arr = JSONArray()
+                list.take(MAX_PHOTOS_PER_STAMP).forEach { uri -> arr.put(uri) }
+                photoListsObj.put(k, arr)
+            }
+            put("ticketPhotoLists", photoListsObj)
 
             val noteObj = JSONObject()
             state.ticketNoteOverrides.forEach { (k, v) -> noteObj.put(k, v) }
@@ -343,7 +336,7 @@ object ProfilePassportStorage {
     fun persistPickedImageToInternalStorage(context: Context, sourceUri: Uri, prefix: String): String? {
         return try {
             val dir = File(context.filesDir, "passport_media").apply { mkdirs() }
-            val destFile = File(dir, "${prefix}_${System.currentTimeMillis()}.jpg")
+            val destFile = File(dir, "${prefix}_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}.jpg")
             context.contentResolver.openInputStream(sourceUri)?.use { input ->
                 FileOutputStream(destFile).use { output ->
                     input.copyTo(output)
