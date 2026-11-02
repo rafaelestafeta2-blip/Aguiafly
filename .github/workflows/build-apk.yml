@@ -76,7 +76,7 @@ jobs:
             echo "debug.keystore validado com sucesso."
           fi
 
-      - name: Preparar ficheiro .env com Chaves Reais (GitHub Secrets)
+      - name: Preparar ficheiro .env (Com ou Sem GitHub Secrets)
         env:
           DUFFEL_API_TOKEN: ${{ secrets.DUFFEL_API_TOKEN }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
@@ -88,18 +88,24 @@ jobs:
 
           if [ -n "$CLEAN_DUFFEL" ]; then
             echo "DUFFEL_API_TOKEN=${CLEAN_DUFFEL}" > .env
+            echo "✔ DUFFEL_API_TOKEN carregado dos GitHub Secrets."
           else
             echo "DUFFEL_API_TOKEN=DUFFEL_SANDBOX_TOKEN_PLACEHOLDER" > .env
+            echo "ℹ DUFFEL_API_TOKEN não definido nos Secrets — a usar modo Sandbox/Fallback (não impede a geração do APK)."
           fi
           if [ -n "$CLEAN_STRIPE_PUB" ]; then
             echo "STRIPE_PUBLISHABLE_KEY=${CLEAN_STRIPE_PUB}" >> .env
+            echo "✔ STRIPE_PUBLISHABLE_KEY carregado dos GitHub Secrets."
           else
             echo "STRIPE_PUBLISHABLE_KEY=STRIPE_PUBLISHABLE_KEY_PLACEHOLDER" >> .env
+            echo "ℹ STRIPE_PUBLISHABLE_KEY não definido nos Secrets — a usar chave de contingência."
           fi
           if [ -n "$CLEAN_STRIPE_SEC" ]; then
             echo "STRIPE_SECRET_KEY=${CLEAN_STRIPE_SEC}" >> .env
+            echo "✔ STRIPE_SECRET_KEY carregado dos GitHub Secrets."
           else
             echo "STRIPE_SECRET_KEY=STRIPE_SECRET_KEY_PLACEHOLDER" >> .env
+            echo "ℹ STRIPE_SECRET_KEY não definido nos Secrets — a usar chave de contingência."
           fi
 
       - name: Configurar Gradle 9.3.1
@@ -109,7 +115,19 @@ jobs:
           cache-read-only: false
 
       - name: Compilar APK Oficial (assembleDebug)
-        run: gradle :app:assembleDebug --no-configuration-cache --max-workers=2 --console=plain --stacktrace
+        run: |
+          set +e
+          gradle :app:assembleDebug --no-configuration-cache --max-workers=2 --console=plain 2>&1 | tee build_output.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo ""
+            echo "=================================================================="
+            echo "❌ ERROS DE COMPILAÇÃO ENCONTRADOS (Resumo Direto):"
+            echo "=================================================================="
+            grep -E "^e: |FAILURE:|^\* What went wrong:|^  > " build_output.log | tail -n 40 || true
+            echo "=================================================================="
+            exit $BUILD_STATUS
+          fi
 
       - name: Publicar APK para Download nos Artifacts do GitHub
         uses: actions/upload-artifact@v4
