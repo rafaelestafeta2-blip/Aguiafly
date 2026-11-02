@@ -5,6 +5,8 @@ import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.ServerTimestamp
 
+const val AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR = 25.00
+
 @IgnoreExtraProperties
 data class IssuedTicket(
     @DocumentId val id: String = "",
@@ -31,6 +33,69 @@ data class IssuedTicket(
     val addedToGoogleWallet: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    val isCancelled: Boolean
+        get() = iataBarcodePayload.contains("|CANCELLED:")
+
+    val parsedCancellationId: String
+        get() = iataBarcodePayload
+            .substringAfter("|CANCELLED:", "")
+            .substringBefore(":")
+            .ifBlank { "ore_${orderId.takeLast(8)}" }
+
+    val parsedNetStripeRefundEur: Double
+        get() = iataBarcodePayload
+            .substringAfter("|CANCELLED:", "")
+            .split(":")
+            .getOrNull(1)
+            ?.toDoubleOrNull() ?: 0.0
+
+    val parsedAirlineRefundEur: Double
+        get() = iataBarcodePayload
+            .substringAfter("|CANCELLED:", "")
+            .split(":")
+            .getOrNull(2)
+            ?.toDoubleOrNull() ?: 0.0
+}
+
+/**
+ * Cotação de Cancelamento & Reembolso consultada via Duffel API (POST /air/order_cancellations)
+ * e enriquecida com as Regras Financeiras do AguiaFly:
+ * - Taxas operacionais originais da intermediação (€3.50 + 3.5%) retidas integralmente.
+ * - Taxa administrativa do AguiaFly de €25.00 deduzida sobre o valor devolvido pela companhia aérea.
+ * - Valor líquido final devolvido no cartão de crédito via Stripe.
+ */
+data class OrderCancellationQuote(
+    val ticketId: String,
+    val orderId: String,
+    val bookingReference: String,
+    val flightSummary: String,
+    val cancellationId: String,
+    val totalChargedOriginalEur: Double,
+    val originalNetFareEur: Double,
+    val retainedFixedFeeEur: Double,
+    val retainedPercentageFeeEur: Double,
+    val retainedIntermediationFeeEur: Double, // €3.50 + 3.5% retido
+    val airlineRefundAmountEur: Double, // Valor devolvido pela companhia aérea (Duffel API)
+    val aguiaFlyAdminFeeEur: Double = AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR, // €25.00
+    val netStripeCustomerRefundEur: Double, // Valor líquido final devolvido no cartão via Stripe
+    val currency: String = "EUR",
+    val expiresAt: String? = null,
+    val isLiveDuffelQuote: Boolean = false
+)
+
+data class OrderCancellationConfirmation(
+    val ticketId: String,
+    val orderId: String,
+    val bookingReference: String,
+    val cancellationId: String,
+    val stripeRefundId: String,
+    val confirmedAtIso: String,
+    val airlineRefundAmountEur: Double,
+    val retainedIntermediationFeeEur: Double,
+    val aguiaFlyAdminFeeEur: Double = AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR,
+    val netStripeCustomerRefundEur: Double,
+    val currency: String = "EUR"
 )
 
 data class EuropeanAirport(

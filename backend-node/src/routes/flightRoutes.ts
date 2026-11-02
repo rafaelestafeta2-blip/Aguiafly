@@ -4,6 +4,8 @@ import {
   getOfferSeatMaps,
   createDuffelOrder,
   searchPlacesSuggestions,
+  createDuffelOrderCancellationQuote,
+  confirmDuffelOrderCancellation,
 } from "../services/duffelService";
 import {
   createStripePaymentIntent,
@@ -12,7 +14,12 @@ import {
   getStripePublishableKey,
   isStripeSecretConfigured,
   calculateStripeFinalFare,
+  processCustomerStripeRefund,
 } from "../services/stripeService";
+import {
+  calculateCancellationRefundBreakdown,
+  AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR,
+} from "../middleware/markupMiddleware";
 import {
   scheduleAutoCheckIn,
   executeCheckInAndIssueBoardingPass,
@@ -139,3 +146,84 @@ flightRouter.post("/checkin/execute/:orderId", (req: Request, res: Response) => 
   }
   res.json({ data: updated });
 });
+
+/**
+ * Consulta a cotação de cancelamento na Duffel API (POST /air/order_cancellations)
+ * e calcula o valor líquido de reembolso aplicando a Taxa Administrativa AguiaFly (€25.00)
+ * e retendo as taxas operacionais originais (€3.50 + 3.5%).
+ */
+flightRouter.post("/orders/cancellations/quote", async (req: Request, res: Response) => {
+  try {
+    const { orderId, originalNetFareEur, originalMarkupEur } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ error: "orderId is required to request a cancellation quote." });
+    }
+    const quote = await createDuffelOrderCancellationQuote({
+      orderId: String(orderId),
+      originalNetFareEur: parseFloat(originalNetFareEur || "0"),
+      originalMarkupEur: originalMarkupEur ? parseFloat(originalMarkupEur) : undefined,
+    });
+    res.json({ data: quote });
+  } catch (error: any) {
+    res.status(500).json({
+      error: error.message || "Failed to fetch cancellation quote from Duffel API",
+    });
+  }
+});
+
+/**
+ * Confirma o cancelamento na Duffel API (POST /air/order_cancellations/:id/actions/confirm)
+ * e processa o estorno líquido no cartão de crédito do cliente via Stripe.
+ */
+flightRouter.post(
+  "/orders/cancellations/:cancellationId/confirm",
+  async (req: Request, res: Response) => {
+    try {
+      const { cancellationId } = req.params;
+      const {
+        orderId,
+        bookingReference,
+        paymentIntentId,
+        originalNetFareEur,
+        originalMarkupEur,
+        airlineRefundAmountEur,
+      } = req.body;
+
+      const confirmedDuffel = await confirmDuffelOrderCancellation(cancellationId);
+      const verifiedAirlineRefundEur = parseFloat(
+        confirmedDuffel.refund_amount || String(airlineRefundAmountEur || "0")
+      );
+
+      const refundBreakdown = calculateCancellationRefundBreakdown({
+        originalNetFareEur: parseFloat(originalNetFareEur || "0"),
+        airlineRefundAmountEur: verifiedAirlineRefundEur,
+        originalMarkupEur: originalMarkupEur ? parseFloat(originalMarkupEur) : undefined,
+      });
+
+      const stripeRefund = await processCustomerStripeRefund({
+        paymentIntentId,
+        orderId: String(orderId || confirmedDuffel.order_id),
+        bookingReference: String(bookingReference || ""),
+        airlineRefundAmountEur: refundBreakdown.airlineRefundAmountEur,
+        aguiaFlyAdminFeeEur: AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR,
+        retainedIntermediationFeeEur: refundBreakdown.retainedIntermediationFeeEur,
+        netStripeCustomerRefundEur: refundBreakdown.netStripeCustomerRefundEur,
+      });
+
+      res.json({
+        data: {
+          cancellationId: confirmedDuffel.id,
+          orderId: confirmedDuffel.order_id,
+          confirmedAt: confirmedDuffel.confirmed_at || new Date().toISOString(),
+          refundBreakdown,
+          stripeRefund,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: error.message || "Failed to confirm order cancellation and process Stripe refund",
+      });
+    }
+  }
+);
+

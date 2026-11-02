@@ -131,6 +131,66 @@ class TicketFirestoreRepository(
         }
     }
 
+    /**
+     * Regista o cancelamento e reembolso do bilhete no Firestore preservando todas as regras
+     * de validação de schema (delete + set no mesmo documentId com sufixo |CANCELLED:...).
+     */
+    suspend fun markTicketCancelled(
+        ticket: IssuedTicket,
+        cancellationId: String,
+        netStripeRefundEur: Double,
+        airlineRefundEur: Double
+    ): Result<IssuedTicket> {
+        val uid = requireUserId()
+        if (ticket.id.isBlank()) {
+            return Result.failure(IllegalArgumentException("Ticket ID is blank"))
+        }
+        val docRef = db.collection("tickets").document(ticket.id)
+        val basePayload = ticket.iataBarcodePayload.substringBefore("|CANCELLED:")
+        val netFormatted = String.format(java.util.Locale.US, "%.2f", netStripeRefundEur)
+        val airlineFormatted = String.format(java.util.Locale.US, "%.2f", airlineRefundEur)
+        val updatedBcbp = "$basePayload|CANCELLED:${cancellationId.take(24)}:$netFormatted:$airlineFormatted".take(495)
+        val updatedTicket = ticket.copy(
+            userId = uid,
+            iataBarcodePayload = updatedBcbp
+        )
+        return try {
+            docRef.delete().await()
+            val payload = mapOf(
+                "userId" to uid,
+                "orderId" to updatedTicket.orderId,
+                "bookingReference" to updatedTicket.bookingReference,
+                "passengerName" to updatedTicket.passengerName,
+                "originIata" to updatedTicket.originIata,
+                "originCity" to updatedTicket.originCity,
+                "destinationIata" to updatedTicket.destinationIata,
+                "destinationCity" to updatedTicket.destinationCity,
+                "departureIso" to updatedTicket.departureIso,
+                "arrivalIso" to updatedTicket.arrivalIso,
+                "airlineName" to updatedTicket.airlineName,
+                "flightNumber" to updatedTicket.flightNumber,
+                "aircraftName" to updatedTicket.aircraftName,
+                "cabinClass" to updatedTicket.cabinClass,
+                "seatDesignator" to updatedTicket.seatDesignator,
+                "netAmountEur" to updatedTicket.netAmountEur,
+                "markupEur" to updatedTicket.markupEur,
+                "ancillariesEur" to updatedTicket.ancillariesEur,
+                "totalChargedEur" to updatedTicket.totalChargedEur,
+                "iataBarcodePayload" to updatedTicket.iataBarcodePayload,
+                "addedToGoogleWallet" to updatedTicket.addedToGoogleWallet,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
+            Result.success(updatedTicket)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
     fun observeMarkupConfig(userId: String = requireUserId()): Flow<MarkupConfig> = flow {
         val docRef = db.collection("markup_configs").document(userId)
         emitAll(

@@ -185,6 +185,11 @@ fun AetherAuthenticatedShell(
     val detectedAirport by bookingViewModel.detectedAirport.collectAsStateWithLifecycle()
     val selectedCurrency by bookingViewModel.selectedCurrency.collectAsStateWithLifecycle()
     val savedTravelerProfile by bookingViewModel.savedTravelerProfile.collectAsStateWithLifecycle()
+    val activeCancellationTicket by bookingViewModel.activeCancellationTicket.collectAsStateWithLifecycle()
+    val activeCancellationQuote by bookingViewModel.activeCancellationQuote.collectAsStateWithLifecycle()
+    val isLoadingCancellationQuote by bookingViewModel.isLoadingCancellationQuote.collectAsStateWithLifecycle()
+    val isConfirmingCancellation by bookingViewModel.isConfirmingCancellation.collectAsStateWithLifecycle()
+    val confirmedCancellations by bookingViewModel.confirmedCancellations.collectAsStateWithLifecycle()
 
     val chatHistory by aiViewModel.chatHistory.collectAsStateWithLifecycle()
     val aiState by aiViewModel.uiState.collectAsStateWithLifecycle()
@@ -435,7 +440,15 @@ fun AetherAuthenticatedShell(
                             "Preciso de assistência Concierge VIP prioritária para minha reserva confirmada PNR ${ticket.bookingReference} no voo ${ticket.flightNumber} (${ticket.airlineName}) de ${ticket.originCity} (${ticket.originIata}) para ${ticket.destinationCity} (${ticket.destinationIata}) em ${ticket.departureIso.take(10)}, cabine ${ticket.cabinClass}."
                         )
                         currentScreen = MainDestination.AI_CONCIERGE
-                    }
+                    },
+                    activeCancellationTicket = activeCancellationTicket,
+                    activeCancellationQuote = activeCancellationQuote,
+                    isLoadingCancellationQuote = isLoadingCancellationQuote,
+                    isConfirmingCancellation = isConfirmingCancellation,
+                    confirmedCancellations = confirmedCancellations,
+                    onRequestCancellationQuote = bookingViewModel::requestTicketCancellationQuote,
+                    onConfirmCancellationRefund = bookingViewModel::confirmTicketCancellationAndRefund,
+                    onDismissCancellationDialog = bookingViewModel::dismissCancellationDialog
                 )
 
                 MainDestination.PROFILE_PASSPORT -> ProfilePassportScreen(

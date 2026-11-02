@@ -9,6 +9,8 @@ import com.example.data.model.EnrichedFlightOffer
 import com.example.data.model.FrequentFlyerSelection
 import com.example.data.model.IssuedTicket
 import com.example.data.model.MarkupConfig
+import com.example.data.model.OrderCancellationConfirmation
+import com.example.data.model.OrderCancellationQuote
 import com.example.data.model.PassengerComposition
 import com.example.data.model.PassengerDocumentInfo
 import com.example.data.model.PaymentCardInput
@@ -114,6 +116,21 @@ class FlightBookingViewModel(
 
     private val _selectedCurrency = MutableStateFlow(DisplayCurrency.EUR)
     val selectedCurrency: StateFlow<DisplayCurrency> = _selectedCurrency.asStateFlow()
+
+    private val _activeCancellationTicket = MutableStateFlow<IssuedTicket?>(null)
+    val activeCancellationTicket: StateFlow<IssuedTicket?> = _activeCancellationTicket.asStateFlow()
+
+    private val _activeCancellationQuote = MutableStateFlow<OrderCancellationQuote?>(null)
+    val activeCancellationQuote: StateFlow<OrderCancellationQuote?> = _activeCancellationQuote.asStateFlow()
+
+    private val _isLoadingCancellationQuote = MutableStateFlow(false)
+    val isLoadingCancellationQuote: StateFlow<Boolean> = _isLoadingCancellationQuote.asStateFlow()
+
+    private val _isConfirmingCancellation = MutableStateFlow(false)
+    val isConfirmingCancellation: StateFlow<Boolean> = _isConfirmingCancellation.asStateFlow()
+
+    private val _confirmedCancellations = MutableStateFlow<Map<String, OrderCancellationConfirmation>>(emptyMap())
+    val confirmedCancellations: StateFlow<Map<String, OrderCancellationConfirmation>> = _confirmedCancellations.asStateFlow()
 
     val isDuffelLive: Boolean = flightRepository.isDuffelConfigured()
     val isStripeLive: Boolean = flightRepository.isStripeConfigured()
@@ -559,7 +576,73 @@ class FlightBookingViewModel(
         }
     }
 
+    /**
+     * Consulta o endpoint de cancelamentos da Duffel API (POST /air/order_cancellations)
+     * e exibe o resumo financeiro antes da confirmação final (Valor devolvido pela companhia aérea,
+     * Taxa de serviço de €25.00, Taxas operacionais originais retidas €3.50 + 3.5% e Valor líquido final via Stripe).
+     */
+    fun requestTicketCancellationQuote(ticket: IssuedTicket) {
+        _activeCancellationTicket.value = ticket
+        _activeCancellationQuote.value = null
+        viewModelScope.launch {
+            _isLoadingCancellationQuote.value = true
+            try {
+                val res = flightRepository.requestOrderCancellationQuote(ticket)
+                res.onSuccess { quote ->
+                    _activeCancellationQuote.value = quote
+                }.onFailure { err ->
+                    _statusBanner.value = "Erro ao consultar reembolso na Duffel: ${err.localizedMessage}"
+                    _activeCancellationTicket.value = null
+                }
+            } finally {
+                _isLoadingCancellationQuote.value = false
+            }
+        }
+    }
+
+    /**
+     * Confirma definitivamente o cancelamento da reserva na Duffel API e processa o reembolso
+     * líquido no cartão de crédito via Stripe.
+     */
+    fun confirmTicketCancellationAndRefund() {
+        val ticket = _activeCancellationTicket.value ?: return
+        val quote = _activeCancellationQuote.value ?: return
+        viewModelScope.launch {
+            _isConfirmingCancellation.value = true
+            try {
+                val res = flightRepository.confirmOrderCancellationAndStripeRefund(ticket, quote)
+                res.onSuccess { confirmation ->
+                    val key = ticket.id.ifBlank { ticket.orderId }
+                    _confirmedCancellations.value = _confirmedCancellations.value + (key to confirmation)
+                    if (ticket.id.isNotBlank()) {
+                        ticketRepository.markTicketCancelled(
+                            ticket = ticket,
+                            cancellationId = confirmation.cancellationId,
+                            netStripeRefundEur = confirmation.netStripeCustomerRefundEur,
+                            airlineRefundEur = confirmation.airlineRefundAmountEur
+                        )
+                    }
+                    _activeCancellationTicket.value = null
+                    _activeCancellationQuote.value = null
+                    _statusBanner.value =
+                        "Reserva PNR ${ticket.bookingReference} cancelada! Estorno líquido de ${MarkupEngine.formatEur(confirmation.netStripeCustomerRefundEur)} enviado ao cartão via Stripe."
+                }.onFailure { err ->
+                    _statusBanner.value = "Falha ao confirmar cancelamento: ${err.localizedMessage}"
+                }
+            } finally {
+                _isConfirmingCancellation.value = false
+            }
+        }
+    }
+
+    fun dismissCancellationDialog() {
+        if (_isConfirmingCancellation.value) return
+        _activeCancellationTicket.value = null
+        _activeCancellationQuote.value = null
+    }
+
     fun clearBanner() {
         _statusBanner.value = null
     }
 }
+

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.AirlineSeatFlat
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ConfirmationNumber
+import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Luggage
@@ -53,10 +54,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.model.BoardingPassCardData
 import com.example.data.model.IssuedTicket
+import com.example.data.model.OrderCancellationConfirmation
+import com.example.data.model.OrderCancellationQuote
 import com.example.domain.export.TicketPdfExporter
 import com.example.domain.pricing.MarkupEngine
+import com.example.ui.components.CancelledTicketRefundReceiptBanner
 import com.example.ui.components.DestinationCoverHeader
 import com.example.ui.components.DigitalWalletExportDialog
+import com.example.ui.components.OrderCancellationRefundDialog
 import com.example.ui.components.PdfTicketPreviewDialog
 import com.example.ui.components.TicketAircraftSpecsSection
 
@@ -64,7 +69,15 @@ import com.example.ui.components.TicketAircraftSpecsSection
 fun TicketsWalletScreen(
     tickets: List<IssuedTicket>,
     onToggleGoogleWallet: (IssuedTicket) -> Unit,
-    onRequestVipSupportForTicket: (IssuedTicket) -> Unit = {}
+    onRequestVipSupportForTicket: (IssuedTicket) -> Unit = {},
+    activeCancellationTicket: IssuedTicket? = null,
+    activeCancellationQuote: OrderCancellationQuote? = null,
+    isLoadingCancellationQuote: Boolean = false,
+    isConfirmingCancellation: Boolean = false,
+    confirmedCancellations: Map<String, OrderCancellationConfirmation> = emptyMap(),
+    onRequestCancellationQuote: (IssuedTicket) -> Unit = {},
+    onConfirmCancellationRefund: () -> Unit = {},
+    onDismissCancellationDialog: () -> Unit = {}
 ) {
     var walletDialogTicket by remember { mutableStateOf<IssuedTicket?>(null) }
     var pdfPreviewTicket by remember { mutableStateOf<IssuedTicket?>(null) }
@@ -88,6 +101,17 @@ fun TicketsWalletScreen(
         )
     }
 
+    activeCancellationTicket?.let { cancellingTicket ->
+        OrderCancellationRefundDialog(
+            ticket = cancellingTicket,
+            quote = activeCancellationQuote,
+            isLoadingQuote = isLoadingCancellationQuote,
+            isConfirmingCancellation = isConfirmingCancellation,
+            onConfirmCancellation = onConfirmCancellationRefund,
+            onDismiss = onDismissCancellationDialog
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -103,7 +127,7 @@ fun TicketsWalletScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Bilhetes oficiais emitidos via IATA NDC, E-Ticket Executivo em PDF com Logo & QR Code e integração Wallet",
+                    text = "Bilhetes oficiais emitidos via IATA NDC, E-Ticket Executivo em PDF, Gestão de Cancelamento/Reembolso Duffel & Stripe e Wallet",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -151,11 +175,14 @@ fun TicketsWalletScreen(
             }
         } else {
             items(tickets, key = { it.id.ifBlank { it.orderId } }) { ticket ->
+                val ticketKey = ticket.id.ifBlank { ticket.orderId }
                 BoardingPassCard(
                     ticket = ticket,
+                    cancellationConfirmation = confirmedCancellations[ticketKey],
                     onOpenWalletDialog = { walletDialogTicket = ticket },
                     onOpenPdfPreview = { pdfPreviewTicket = ticket },
-                    onRequestVipSupport = { onRequestVipSupportForTicket(ticket) }
+                    onRequestVipSupport = { onRequestVipSupportForTicket(ticket) },
+                    onRequestCancellation = { onRequestCancellationQuote(ticket) }
                 )
             }
         }
@@ -165,9 +192,11 @@ fun TicketsWalletScreen(
 @Composable
 private fun BoardingPassCard(
     ticket: IssuedTicket,
+    cancellationConfirmation: OrderCancellationConfirmation?,
     onOpenWalletDialog: () -> Unit,
     onOpenPdfPreview: () -> Unit,
-    onRequestVipSupport: () -> Unit
+    onRequestVipSupport: () -> Unit,
+    onRequestCancellation: () -> Unit
 ) {
     val context = LocalContext.current
     var showAircraftSpecs by remember { mutableStateOf(false) }
@@ -435,6 +464,41 @@ private fun BoardingPassCard(
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    // 6. Gestão de Cancelamentos & Reembolsos (Duffel POST /air/order_cancellations + Estorno Stripe)
+                    val isTicketCancelled = ticket.isCancelled || cancellationConfirmation != null
+                    if (isTicketCancelled) {
+                        CancelledTicketRefundReceiptBanner(
+                            ticket = ticket,
+                            confirmation = cancellationConfirmation
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = onRequestCancellation,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("request_cancellation_refund_button_${ticket.bookingReference}"),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.75f)),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CurrencyExchange,
+                                contentDescription = "Solicitar Cancelamento e Reembolso",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Solicitar Cancelamento / Reembolso",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
                     }
                 }
             }

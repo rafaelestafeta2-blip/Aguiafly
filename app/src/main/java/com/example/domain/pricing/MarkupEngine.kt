@@ -1,8 +1,13 @@
 package com.example.domain.pricing
 
+import com.example.data.model.AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR
 import com.example.data.model.ANCILLARY_SERVICE_MARGIN_EUR
+import com.example.data.model.IssuedTicket
+import com.example.data.model.LAUNCH_FIXED_MARKUP_EUR
+import com.example.data.model.LAUNCH_PERCENTAGE_MARKUP
 import com.example.data.model.MarkupConfig
 import com.example.data.model.OfferPriceBreakdown
+import com.example.data.model.OrderCancellationQuote
 import com.example.data.model.SelectedAncillaries
 import kotlin.math.roundToInt
 
@@ -90,6 +95,54 @@ object MarkupEngine {
         )
     }
 
+    /**
+     * Regras Financeiras Oficiais de Cancelamento e Reembolso AguiaFly:
+     * 1. As taxas operacionais originais da intermediação (€3.50 + 3.5%) são integralmente retidas.
+     * 2. Sobre o valor estornado pela companhia aérea (consultado via Duffel POST /air/order_cancellations),
+     *    aplica-se uma taxa administrativa do AguiaFly de €25.00 para cobrir custos de gestão.
+     * 3. O valor líquido final (Estorno Cia Aérea - €25.00) é devolvido no cartão de crédito via Stripe.
+     */
+    fun calculateCancellationRefundQuote(
+        ticket: IssuedTicket,
+        airlineRefundAmountEur: Double,
+        cancellationId: String,
+        expiresAt: String? = null,
+        isLiveDuffelQuote: Boolean = false
+    ): OrderCancellationQuote {
+        val originalNet = roundEur(ticket.netAmountEur.coerceAtLeast(0.0))
+        val retainedFixed = LAUNCH_FIXED_MARKUP_EUR
+        val retainedPct = roundEur(originalNet * (LAUNCH_PERCENTAGE_MARKUP / 100.0))
+        val defaultRetainedMarkup = roundEur(retainedFixed + retainedPct)
+        val retainedIntermediation = if (ticket.markupEur > 0.0) {
+            roundEur(ticket.markupEur)
+        } else {
+            defaultRetainedMarkup
+        }
+
+        val safeAirlineRefund = roundEur(airlineRefundAmountEur.coerceAtLeast(0.0))
+        val adminFee = AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR
+        val netStripeCustomerRefund = roundEur((safeAirlineRefund - adminFee).coerceAtLeast(0.0))
+
+        return OrderCancellationQuote(
+            ticketId = ticket.id,
+            orderId = ticket.orderId,
+            bookingReference = ticket.bookingReference,
+            flightSummary = "${ticket.flightNumber} • ${ticket.originCity} (${ticket.originIata}) ➔ ${ticket.destinationCity} (${ticket.destinationIata})",
+            cancellationId = cancellationId,
+            totalChargedOriginalEur = roundEur(ticket.totalChargedEur),
+            originalNetFareEur = originalNet,
+            retainedFixedFeeEur = retainedFixed,
+            retainedPercentageFeeEur = retainedPct,
+            retainedIntermediationFeeEur = retainedIntermediation,
+            airlineRefundAmountEur = safeAirlineRefund,
+            aguiaFlyAdminFeeEur = adminFee,
+            netStripeCustomerRefundEur = netStripeCustomerRefund,
+            currency = "EUR",
+            expiresAt = expiresAt,
+            isLiveDuffelQuote = isLiveDuffelQuote
+        )
+    }
+
     fun formatEur(amount: Double): String {
         val rounded = roundEur(amount)
         val whole = rounded.toInt()
@@ -106,3 +159,4 @@ object MarkupEngine {
         return (value * 100.0).roundToInt() / 100.0
     }
 }
+

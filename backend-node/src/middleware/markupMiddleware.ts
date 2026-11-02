@@ -149,3 +149,61 @@ export function applyDynamicMarkup(netAmountEur: number) {
   };
 }
 
+export const AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR = 25.0;
+
+export interface CancellationRefundBreakdown {
+  originalNetFareEur: number;
+  retainedFixedFeeEur: number;
+  retainedPercentageFeeEur: number;
+  retainedIntermediationFeeEur: number; // €3.50 + 3.5% retidos integralmente
+  airlineRefundAmountEur: number; // Valor devolvido pela companhia aérea (Duffel POST /air/order_cancellations)
+  aguiaFlyAdminFeeEur: number; // Taxa administrativa AguiaFly de €25.00
+  netStripeCustomerRefundEur: number; // Valor líquido final devolvido no cartão via Stripe
+  currency: "EUR";
+  isRefundableAfterFee: boolean;
+  formulaSummary: string;
+}
+
+/**
+ * Regras Financeiras de Reembolso AguiaFly:
+ * 1. As taxas operacionais originais da intermediação (€3.50 + 3.5%) são retidas.
+ * 2. Aplica-se uma taxa administrativa do AguiaFly de €25.00 sobre o valor estornado pela companhia aérea.
+ * 3. O valor líquido final é devolvido no cartão de crédito do cliente via Stripe.
+ */
+export function calculateCancellationRefundBreakdown(params: {
+  originalNetFareEur: number;
+  airlineRefundAmountEur: number;
+  originalMarkupEur?: number;
+}): CancellationRefundBreakdown {
+  const safeOriginalNet = Number(Math.max(0, params.originalNetFareEur).toFixed(2));
+  const retainedFixedFeeEur = 3.5;
+  const retainedPercentageFeeEur = Number((safeOriginalNet * 0.035).toFixed(2));
+  const calculatedRetainedMarkup = Number(
+    (retainedFixedFeeEur + retainedPercentageFeeEur).toFixed(2)
+  );
+  const retainedIntermediationFeeEur =
+    params.originalMarkupEur && params.originalMarkupEur > 0
+      ? Number(params.originalMarkupEur.toFixed(2))
+      : calculatedRetainedMarkup;
+
+  const airlineRefundAmountEur = Number(Math.max(0, params.airlineRefundAmountEur).toFixed(2));
+  const aguiaFlyAdminFeeEur = AGUIAFLY_CANCELLATION_ADMIN_FEE_EUR;
+  const netStripeCustomerRefundEur = Number(
+    Math.max(0, airlineRefundAmountEur - aguiaFlyAdminFeeEur).toFixed(2)
+  );
+
+  return {
+    originalNetFareEur: safeOriginalNet,
+    retainedFixedFeeEur,
+    retainedPercentageFeeEur,
+    retainedIntermediationFeeEur,
+    airlineRefundAmountEur,
+    aguiaFlyAdminFeeEur,
+    netStripeCustomerRefundEur,
+    currency: "EUR",
+    isRefundableAfterFee: netStripeCustomerRefundEur > 0,
+    formulaSummary: `Reembolso Cia Aérea (€${airlineRefundAmountEur.toFixed(2)}) - Taxa Administrativa AguiaFly (€${aguiaFlyAdminFeeEur.toFixed(2)}) = €${netStripeCustomerRefundEur.toFixed(2)} líquido no cartão (Taxas originais €3.50 + 3.5% = €${retainedIntermediationFeeEur.toFixed(2)} retidas)`,
+  };
+}
+
+

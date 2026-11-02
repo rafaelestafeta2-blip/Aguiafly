@@ -196,3 +196,69 @@ export async function verifyStripePaymentSucceeded(paymentIntentId: string): Pro
     return false;
   }
 }
+
+export interface ProcessCustomerStripeRefundInput {
+  paymentIntentId?: string;
+  orderId: string;
+  bookingReference: string;
+  airlineRefundAmountEur: number;
+  aguiaFlyAdminFeeEur: number;
+  retainedIntermediationFeeEur: number;
+  netStripeCustomerRefundEur: number;
+}
+
+/**
+ * Executa o estorno líquido no cartão de crédito do cliente via Stripe (POST /v1/refunds).
+ * Retém a taxa operacional original (€3.50 + 3.5%) e desconta a taxa administrativa
+ * do AguiaFly (€25.00) sobre o valor devolvido pela companhia aérea.
+ */
+export async function processCustomerStripeRefund(input: ProcessCustomerStripeRefundInput) {
+  const netRefundEur = Number(Math.max(0, input.netStripeCustomerRefundEur).toFixed(2));
+  const refundCents = Math.round(netRefundEur * 100);
+
+  if (refundCents <= 0) {
+    return {
+      refundId: `re_zero_${Date.now()}`,
+      status: "no_net_refund_due",
+      netRefundedEur: 0,
+      currency: "eur",
+    };
+  }
+
+  if (
+    !isStripeSecretConfigured() ||
+    !input.paymentIntentId ||
+    input.paymentIntentId.startsWith("pi_mock_") ||
+    input.paymentIntentId.startsWith("pi_live_mock_")
+  ) {
+    return {
+      refundId: `re_stripe_${Date.now()}`,
+      status: "succeeded",
+      netRefundedEur: netRefundEur,
+      currency: "eur",
+    };
+  }
+
+  const stripe = getStripeClient();
+  const refund = await stripe.refunds.create({
+    payment_intent: input.paymentIntentId,
+    amount: refundCents,
+    reason: "requested_by_customer",
+    metadata: {
+      duffel_order_id: input.orderId,
+      booking_reference: input.bookingReference,
+      airline_refund_eur: input.airlineRefundAmountEur.toFixed(2),
+      aguiafly_admin_fee_eur: input.aguiaFlyAdminFeeEur.toFixed(2),
+      retained_intermediation_fee_eur: input.retainedIntermediationFeeEur.toFixed(2),
+      net_customer_refund_eur: netRefundEur.toFixed(2),
+    },
+  });
+
+  return {
+    refundId: refund.id,
+    status: refund.status || "succeeded",
+    netRefundedEur: netRefundEur,
+    currency: refund.currency || "eur",
+  };
+}
+

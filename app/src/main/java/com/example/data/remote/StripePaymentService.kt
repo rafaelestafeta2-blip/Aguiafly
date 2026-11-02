@@ -87,4 +87,31 @@ interface StripePaymentService {
         @Field("metadata[ota_markup_eur]") otaMarkupEur: String,
         @Field("metadata[pricing_formula]") pricingFormula: String = "€3.50 + 3.5% + Tarifa Neta"
     ): StripePaymentIntentResponse
+
+    /**
+     * Executa o estorno líquido no cartão de crédito do cliente via Stripe (POST /v1/refunds)
+     * após retenção das taxas de intermediação (€3.50 + 3.5%) e dedução da Taxa Administrativa AguiaFly (€25.00).
+     */
+    @FormUrlEncoded
+    @POST("v1/refunds")
+    suspend fun createRefund(
+        @Header("Authorization") bearerSecretKey: String,
+        @Field("payment_intent") paymentIntentId: String,
+        @Field("amount") amountCents: Long,
+        @Field("reason") reason: String = "requested_by_customer",
+        @Field("metadata[duffel_order_id]") duffelOrderId: String,
+        @Field("metadata[booking_reference]") bookingReference: String,
+        @Field("metadata[airline_refund_eur]") airlineRefundEur: String,
+        @Field("metadata[aguiafly_admin_fee_eur]") aguiaFlyAdminFeeEur: String = "25.00",
+        @Field("metadata[retained_intermediation_fee_eur]") retainedIntermediationFeeEur: String,
+        @Field("metadata[net_customer_refund_eur]") netCustomerRefundEur: String
+    ): StripeRefundResponse
 }
+
+data class StripeRefundResponse(
+    @Json(name = "id") val id: String,
+    @Json(name = "amount") val amountCents: Long = 0,
+    @Json(name = "currency") val currency: String = "eur",
+    @Json(name = "status") val status: String = "succeeded"
+)
+

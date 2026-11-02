@@ -1,5 +1,9 @@
 import { Duffel } from "@duffel/api";
-import { calculateOfferMarkup, MarkupRuleConfig } from "../middleware/markupMiddleware";
+import {
+  calculateOfferMarkup,
+  calculateCancellationRefundBreakdown,
+  MarkupRuleConfig,
+} from "../middleware/markupMiddleware";
 
 const duffel = new Duffel({
   token: process.env.DUFFEL_API_TOKEN || "",
@@ -145,5 +149,49 @@ export async function searchEuropeanNdcOffers(params: {
     return [];
   }
 }
+
+/**
+ * 1. INTEGRAÇÃO DUFFEL (POST /air/order_cancellations):
+ * Cria uma solicitação pendente de cancelamento na Duffel API para consultar o valor
+ * exato de reembolso disponível pela companhia aérea (refund_amount) e calcula o
+ * resumo líquido do AguiaFly (retendo €3.50 + 3.5% e aplicando €25.00 de taxa administrativa).
+ */
+export async function createDuffelOrderCancellationQuote(params: {
+  orderId: string;
+  originalNetFareEur: number;
+  originalMarkupEur?: number;
+}) {
+  const cancellationResponse = await duffel.orderCancellations.create({
+    order_id: params.orderId,
+  });
+
+  const cancellation = cancellationResponse.data;
+  const airlineRefundAmountEur = parseFloat(cancellation.refund_amount || "0");
+  const refundBreakdown = calculateCancellationRefundBreakdown({
+    originalNetFareEur: params.originalNetFareEur,
+    airlineRefundAmountEur,
+    originalMarkupEur: params.originalMarkupEur,
+  });
+
+  return {
+    cancellationId: cancellation.id,
+    orderId: cancellation.order_id,
+    refundTo: cancellation.refund_to,
+    expiresAt: cancellation.expires_at,
+    confirmedAt: cancellation.confirmed_at,
+    airlineRefundCurrency: cancellation.refund_currency || "EUR",
+    refundBreakdown,
+  };
+}
+
+/**
+ * Confirma definitivamente o cancelamento da reserva na Duffel API
+ * (POST /air/order_cancellations/:id/actions/confirm).
+ */
+export async function confirmDuffelOrderCancellation(cancellationId: string) {
+  const confirmed = await duffel.orderCancellations.confirm(cancellationId);
+  return confirmed.data;
+}
+
 
 

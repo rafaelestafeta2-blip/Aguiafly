@@ -127,3 +127,29 @@ data class DuffelOrderData(
     @Json(name = "total_amount") val totalAmount: String,
     @Json(name = "total_currency") val totalCurrency: String
 )
+
+/**
+ * Payload para POST /air/order_cancellations (Duffel API v2)
+ */
+data class DuffelOrderCancellationCreateEnvelope(
+    @Json(name = "data") val data: DuffelOrderCancellationCreatePayload
+)
+
+data class DuffelOrderCancellationCreatePayload(
+    @Json(name = "order_id") val orderId: String
+)
+
+data class DuffelOrderCancellationResponseWrapper(
+    @Json(name = "data") val data: DuffelOrderCancellationData
+)
+
+data class DuffelOrderCancellationData(
+    @Json(name = "id") val id: String,
+    @Json(name = "order_id") val orderId: String,
+    @Json(name = "refund_amount") val refundAmount: String = "0.00",
+    @Json(name = "refund_currency") val refundCurrency: String = "EUR",
+    @Json(name = "refund_to") val refundTo: String? = "balance",
+    @Json(name = "expires_at") val expiresAt: String? = null,
+    @Json(name = "confirmed_at") val confirmedAt: String? = null
+)
+
