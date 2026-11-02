@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Arco Dourado Âmbar AguiaFly -->
+    <path
+        android:fillColor="#FFF59E0B"
+        android:pathData="M42,52 C37,60 41,68 51,66 C45,65 43,59 46,53 Z" />
+    <!-- Asas Azuis da Águia -->
+    <path
+        android:fillColor="#FF1D70B8"
+        android:pathData="M32,28 C38,40 48,44 56,47 C51,51 47,57 47,63 C38,56 33,44 32,28 Z" />
+    <path
+        android:fillColor="#FF00B4D8"
+        android:pathData="M35,38 C42,46 50,49 60,48 C63,46 66,47 67,50 C62,50 58,54 54,61 C45,56 38,48 35,38 Z" />
+    <!-- Arco Ciano do Jato Ascendente AguiaFly -->
+    <path
+        android:fillColor="#FF00D4FF"
+        android:pathData="M36,62 C44,72 62,68 75,45 L69,43 L80,34 L77,48 L73,46 C60,65 44,69 36,62 Z" />
+</vector>

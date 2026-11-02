@@ -1,0 +1,236 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isNumberInRange(val, minVal, maxVal) {
+      return (val is int || val is float) && val >= minVal && val <= maxVal;
+    }
+
+    function isValidTicket(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 120 &&
+             data.bookingReference is string && data.bookingReference.size() >= 4 && data.bookingReference.size() <= 16 &&
+             data.passengerName is string && data.passengerName.size() >= 2 && data.passengerName.size() <= 120 &&
+             data.originIata is string && data.originIata.size() == 3 &&
+             data.originCity is string && data.originCity.size() >= 2 && data.originCity.size() <= 80 &&
+             data.destinationIata is string && data.destinationIata.size() == 3 &&
+             data.destinationCity is string && data.destinationCity.size() >= 2 && data.destinationCity.size() <= 80 &&
+             data.departureIso is string && data.departureIso.size() >= 10 && data.departureIso.size() <= 40 &&
+             data.arrivalIso is string && data.arrivalIso.size() >= 10 && data.arrivalIso.size() <= 40 &&
+             data.airlineName is string && data.airlineName.size() >= 2 && data.airlineName.size() <= 80 &&
+             data.flightNumber is string && data.flightNumber.size() >= 2 && data.flightNumber.size() <= 16 &&
+             data.aircraftName is string && data.aircraftName.size() >= 2 && data.aircraftName.size() <= 80 &&
+             data.cabinClass is string && data.cabinClass in ['economy', 'premium_economy', 'business', 'first'] &&
+             data.seatDesignator is string && data.seatDesignator.size() >= 2 && data.seatDesignator.size() <= 10 &&
+             isNumberInRange(data.netAmountEur, 0, 100000) &&
+             isNumberInRange(data.markupEur, 0, 50000) &&
+             isNumberInRange(data.ancillariesEur, 0, 50000) &&
+             isNumberInRange(data.totalChargedEur, 0, 200000) &&
+             data.iataBarcodePayload is string && data.iataBarcodePayload.size() >= 10 && data.iataBarcodePayload.size() <= 500 &&
+             data.addedToGoogleWallet is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidMarkupConfig(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isNumberInRange(data.fixedMarkupEur, 0, 5000) &&
+             isNumberInRange(data.percentageMarkup, 0, 100) &&
+             isNumberInRange(data.seatSelectionFeeEur, 0, 1000) &&
+             isNumberInRange(data.extraBaggageFeeEur, 0, 1000) &&
+             isNumberInRange(data.priorityBoardingFeeEur, 0, 1000) &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPriceAlert(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.originIata is string && data.originIata.size() == 3 &&
+             data.destinationIata is string && data.destinationIata.size() == 3 &&
+             data.cabinClass is string && data.cabinClass in ['economy', 'premium_economy', 'business', 'first'] &&
+             isNumberInRange(data.targetMaxPriceEur, 10, 100000) &&
+             isNumberInRange(data.baselinePriceEur, 10, 100000) &&
+             isNumberInRange(data.lastObservedPriceEur, 10, 100000) &&
+             data.fcmToken is string && data.fcmToken.size() >= 4 && data.fcmToken.size() <= 512 &&
+             data.isActive is bool &&
+             data.promoTriggered is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTravelerProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 80 &&
+             data.lastName is string && data.lastName.size() >= 1 && data.lastName.size() <= 80 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+             data.phone is string && data.phone.size() >= 5 && data.phone.size() <= 32 &&
+             data.documentNumber is string && data.documentNumber.size() >= 4 && data.documentNumber.size() <= 40 &&
+             data.birthDate is string && data.birthDate.size() <= 20 &&
+             data.expiryDate is string && data.expiryDate.size() <= 20 &&
+             data.frequentFlyerProgram is string && data.frequentFlyerProgram.size() <= 40 &&
+             data.frequentFlyerNumber is string && data.frequentFlyerNumber.size() <= 40 &&
+             data.autoCheckInEnabled is bool &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /tickets/{ticketId} {
+      allow get: if isSignedIn() && isValidId(ticketId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(ticketId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'orderId', 'bookingReference', 'passengerName',
+                         'originIata', 'originCity', 'destinationIata', 'destinationCity',
+                         'departureIso', 'arrivalIso', 'airlineName', 'flightNumber',
+                         'aircraftName', 'cabinClass', 'seatDesignator',
+                         'netAmountEur', 'markupEur', 'ancillariesEur', 'totalChargedEur',
+                         'iataBarcodePayload', 'addedToGoogleWallet', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'orderId', 'bookingReference', 'passengerName',
+                         'originIata', 'originCity', 'destinationIata', 'destinationCity',
+                         'departureIso', 'arrivalIso', 'airlineName', 'flightNumber',
+                         'aircraftName', 'cabinClass', 'seatDesignator',
+                         'netAmountEur', 'markupEur', 'ancillariesEur', 'totalChargedEur',
+                         'iataBarcodePayload', 'addedToGoogleWallet', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidTicket(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(ticketId) &&
+                       isValidTicket(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().orderId == existing().orderId &&
+                       incoming().bookingReference == existing().bookingReference &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['addedToGoogleWallet', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(ticketId) && existing().userId == request.auth.uid;
+    }
+
+    match /markup_configs/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll([
+                         'userId', 'fixedMarkupEur', 'percentageMarkup',
+                         'seatSelectionFeeEur', 'extraBaggageFeeEur', 'priorityBoardingFeeEur',
+                         'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'fixedMarkupEur', 'percentageMarkup',
+                         'seatSelectionFeeEur', 'extraBaggageFeeEur', 'priorityBoardingFeeEur',
+                         'updatedAt'
+                       ]) &&
+                       isValidMarkupConfig(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidMarkupConfig(incoming()) &&
+                       request.auth.uid == userId &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'fixedMarkupEur', 'percentageMarkup',
+                         'seatSelectionFeeEur', 'extraBaggageFeeEur', 'priorityBoardingFeeEur',
+                         'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    match /price_alerts/{alertId} {
+      allow get: if isSignedIn() && isValidId(alertId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(alertId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'originIata', 'destinationIata', 'cabinClass',
+                         'targetMaxPriceEur', 'baselinePriceEur', 'lastObservedPriceEur',
+                         'fcmToken', 'isActive', 'promoTriggered', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'originIata', 'destinationIata', 'cabinClass',
+                         'targetMaxPriceEur', 'baselinePriceEur', 'lastObservedPriceEur',
+                         'fcmToken', 'isActive', 'promoTriggered', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidPriceAlert(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(alertId) &&
+                       isValidPriceAlert(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().originIata == existing().originIata &&
+                       incoming().destinationIata == existing().destinationIata &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'targetMaxPriceEur', 'lastObservedPriceEur', 'fcmToken',
+                         'isActive', 'promoTriggered', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(alertId) && existing().userId == request.auth.uid;
+    }
+
+    match /traveler_profiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll([
+                         'userId', 'firstName', 'lastName', 'email', 'phone',
+                         'documentNumber', 'birthDate', 'expiryDate',
+                         'frequentFlyerProgram', 'frequentFlyerNumber',
+                         'autoCheckInEnabled', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'firstName', 'lastName', 'email', 'phone',
+                         'documentNumber', 'birthDate', 'expiryDate',
+                         'frequentFlyerProgram', 'frequentFlyerNumber',
+                         'autoCheckInEnabled', 'updatedAt'
+                       ]) &&
+                       isValidTravelerProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidTravelerProfile(incoming()) &&
+                       request.auth.uid == userId &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'firstName', 'lastName', 'email', 'phone',
+                         'documentNumber', 'birthDate', 'expiryDate',
+                         'frequentFlyerProgram', 'frequentFlyerNumber',
+                         'autoCheckInEnabled', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+  }
+}

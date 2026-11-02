@@ -1,0 +1,166 @@
+{
+  "entities": {
+    "Ticket": {
+      "title": "Ticket",
+      "description": "An issued E-Ticket from Duffel NDC and Stripe payment in EUR.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "orderId": { "type": "string", "description": "Duffel Order ID" },
+        "bookingReference": { "type": "string", "description": "6-char airline PNR" },
+        "passengerName": { "type": "string", "description": "Full passenger name" },
+        "originIata": { "type": "string", "description": "Origin 3-letter IATA code" },
+        "originCity": { "type": "string", "description": "Origin city name" },
+        "destinationIata": { "type": "string", "description": "Destination 3-letter IATA code" },
+        "destinationCity": { "type": "string", "description": "Destination city name" },
+        "departureIso": { "type": "string", "description": "Departure timestamp ISO-8601" },
+        "arrivalIso": { "type": "string", "description": "Arrival timestamp ISO-8601" },
+        "airlineName": { "type": "string", "description": "Operating carrier name" },
+        "flightNumber": { "type": "string", "description": "Flight number e.g. AF1024" },
+        "aircraftName": { "type": "string", "description": "Aircraft model e.g. Airbus A350-900" },
+        "cabinClass": { "type": "string", "enum": ["economy", "premium_economy", "business", "first"] },
+        "seatDesignator": { "type": "string", "description": "Assigned seat e.g. 2A" },
+        "netAmountEur": { "type": "number", "description": "Duffel net fare in EUR" },
+        "markupEur": { "type": "number", "description": "OTA dynamic profit margin in EUR" },
+        "ancillariesEur": { "type": "number", "description": "Ancillaries total in EUR" },
+        "totalChargedEur": { "type": "number", "description": "Total charged via Stripe in EUR" },
+        "iataBarcodePayload": { "type": "string", "description": "IATA BCBP boarding pass barcode payload" },
+        "addedToGoogleWallet": { "type": "boolean", "description": "Whether added to Google Wallet" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "orderId",
+        "bookingReference",
+        "passengerName",
+        "originIata",
+        "originCity",
+        "destinationIata",
+        "destinationCity",
+        "departureIso",
+        "arrivalIso",
+        "airlineName",
+        "flightNumber",
+        "aircraftName",
+        "cabinClass",
+        "seatDesignator",
+        "netAmountEur",
+        "markupEur",
+        "ancillariesEur",
+        "totalChargedEur",
+        "iataBarcodePayload",
+        "addedToGoogleWallet",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MarkupConfig": {
+      "title": "MarkupConfig",
+      "description": "Dynamic profit markup rules configured by the OTA operator per user account.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "fixedMarkupEur": { "type": "number", "description": "Fixed EUR fee added to net fare" },
+        "percentageMarkup": { "type": "number", "description": "Percentage margin added to net fare" },
+        "seatSelectionFeeEur": { "type": "number", "description": "OTA service fee for seat selection in EUR" },
+        "extraBaggageFeeEur": { "type": "number", "description": "OTA fee for extra 23kg bag in EUR" },
+        "priorityBoardingFeeEur": { "type": "number", "description": "OTA fee for priority boarding & lounge in EUR" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "fixedMarkupEur",
+        "percentageMarkup",
+        "seatSelectionFeeEur",
+        "extraBaggageFeeEur",
+        "priorityBoardingFeeEur",
+        "updatedAt"
+      ]
+    },
+    "PriceAlert": {
+      "title": "PriceAlert",
+      "description": "User subscription for promotional fare monitoring and FCM push notifications on a specific route.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "originIata": { "type": "string", "description": "Origin 3-letter IATA airport code" },
+        "destinationIata": { "type": "string", "description": "Destination 3-letter IATA airport code" },
+        "cabinClass": { "type": "string", "enum": ["economy", "premium_economy", "business", "first"] },
+        "targetMaxPriceEur": { "type": "number", "description": "Maximum target promotional price in EUR" },
+        "baselinePriceEur": { "type": "number", "description": "Reference fare in EUR when the alert was created" },
+        "lastObservedPriceEur": { "type": "number", "description": "Most recent observed fare in EUR from cron check" },
+        "fcmToken": { "type": "string", "description": "Device Firebase Cloud Messaging registration token" },
+        "isActive": { "type": "boolean", "description": "Whether push alert monitoring is active" },
+        "promoTriggered": { "type": "boolean", "description": "Whether a promotional fare drop was found" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "originIata",
+        "destinationIata",
+        "cabinClass",
+        "targetMaxPriceEur",
+        "baselinePriceEur",
+        "lastObservedPriceEur",
+        "fcmToken",
+        "isActive",
+        "promoTriggered",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TravelerProfile": {
+      "title": "TravelerProfile",
+      "description": "Saved traveler profile vault for fast checkout auto-fill scoped to the authenticated user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "firstName": { "type": "string", "description": "Traveler first name as on passport" },
+        "lastName": { "type": "string", "description": "Traveler surname as on passport" },
+        "email": { "type": "string", "description": "Contact email for E-Ticket delivery" },
+        "phone": { "type": "string", "description": "International phone number" },
+        "documentNumber": { "type": "string", "description": "Official passport or national ID number" },
+        "birthDate": { "type": "string", "description": "Birth date YYYY-MM-DD" },
+        "expiryDate": { "type": "string", "description": "Document expiry date YYYY-MM-DD" },
+        "frequentFlyerProgram": { "type": "string", "description": "Frequent flyer program code or name" },
+        "frequentFlyerNumber": { "type": "string", "description": "Frequent flyer membership number" },
+        "autoCheckInEnabled": { "type": "boolean", "description": "Whether automatic check-in is enabled by default" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "firstName",
+        "lastName",
+        "email",
+        "phone",
+        "documentNumber",
+        "birthDate",
+        "expiryDate",
+        "frequentFlyerProgram",
+        "frequentFlyerNumber",
+        "autoCheckInEnabled",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/Ticket" },
+      "description": "User E-Tickets issued via Duffel and Stripe"
+    },
+    "/markup_configs/{userId}": {
+      "schema": { "$ref": "#/entities/MarkupConfig" },
+      "description": "Dynamic OTA profit markup configuration scoped to userId"
+    },
+    "/price_alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/PriceAlert" },
+      "description": "Route price alert subscriptions with FCM push notification tokens"
+    },
+    "/traveler_profiles/{userId}": {
+      "schema": { "$ref": "#/entities/TravelerProfile" },
+      "description": "Saved traveler profile vault per authenticated user"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "AguiaFly",
+  "description": "Plataforma AguiaFly de busca e emissão de passagens aéreas com Duffel NDC, Stripe, fotos reais de destinos e aeronaves, mapa de assentos Janela/Corredor e carteira digital.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

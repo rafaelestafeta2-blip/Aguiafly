@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-aether-f5af5234-6974-4ab5-a876-fd7444860492</string>
+    <string name="recaptcha_site_key" translatable="false">6LfpvgsuAAAAACl-mQFLRWpHDh4fWAVriYDUjXRV</string>
+</resources>
