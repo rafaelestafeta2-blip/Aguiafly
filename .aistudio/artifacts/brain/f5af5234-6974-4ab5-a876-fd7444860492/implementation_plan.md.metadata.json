@@ -1,6 +1,6 @@
 {
-  "summary": "Plano de implementacao para correcao e upgrade do Concierge IA AguiaFly (com suporte total a rotas como Ibiza IBZ -> Porto OPO sem timeout de 60s e card de busca imediata) e criacao da nova aba Perfil & Passaporte Digital com foto de perfil e capa da galeria/presets, dados completos do viajante e linha do tempo em formato de passaporte com carimbos de imigracao, bandeira do pais e fotos das viagens.",
-  "updatedAt": "2026-11-02T18:47:46.077878503Z",
+  "summary": "Plano opcional para adicionar suporte ao Secret GOOGLE_SERVICES_JSON no GitHub Actions e um botão de diagnóstico/teste de Notificações Push (FCM) na tela de Perfil do AguiaFly.",
+  "updatedAt": "2026-11-02T21:05:44.498916335Z",
   "requestFeedback": true,
   "userFacing": true
 }

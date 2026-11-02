@@ -55,13 +55,18 @@ jobs:
             "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0"
           fi
 
-      - name: Restaurar ou Gerar debug.keystore
+      - name: Restaurar Certificado Oficial debug.keystore (SHA-1 Firebase OAuth)
         run: |
           if [ -f debug.keystore.base64 ]; then
             base64 -di debug.keystore.base64 > debug.keystore || true
+          else
+            echo "ℹ debug.keystore.base64 não incluído na exportação — a restaurar o certificado oficial AguiaFly (SHA-1 dc2cf3d91cd410b54e7f597a33e1821fae5a17e6)..."
+            cat << 'EOF' | tr -d ' \t\r\n' | base64 -d > debug.keystore
+          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
+          EOF
           fi
           if ! keytool -list -keystore debug.keystore -storepass android >/dev/null 2>&1; then
-            echo "Gerando debug.keystore padrão..."
+            echo "Erro ao validar debug.keystore — gerando fallback..."
             rm -f debug.keystore
             keytool -genkeypair -v \
               -keystore debug.keystore \
@@ -73,7 +78,8 @@ jobs:
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           else
-            echo "debug.keystore validado com sucesso."
+            echo "✔ debug.keystore oficial validado com sucesso:"
+            keytool -list -v -keystore debug.keystore -storepass android | grep -E "SHA1:|SHA256:" || true
           fi
 
       - name: Verificar ou Restaurar app/google-services.json

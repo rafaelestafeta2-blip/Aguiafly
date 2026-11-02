@@ -121,6 +121,12 @@ fun attemptAutoSignIn(
     }
 }
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 fun onGoogleSignInClicked(
     context: Context,
     credentialManager: CredentialManager,
@@ -140,9 +146,11 @@ fun onGoogleSignInClicked(
         .addCredentialOption(signInOption)
         .build()
 
+    val activityContext = context.findActivity() ?: context
+
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context as Activity, request)
+            val result = credentialManager.getCredential(activityContext, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -154,7 +162,20 @@ fun onGoogleSignInClicked(
             }
         } catch (e: GetCredentialCancellationException) {
             Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
-            onAuthCancelled()
+            val msg = e.message.orEmpty()
+            if (
+                msg.contains("28444") ||
+                msg.contains("Developer console", ignoreCase = true) ||
+                msg.contains("DEVELOPER_ERROR", ignoreCase = true) ||
+                msg.contains("10:")
+            ) {
+                onAuthError(
+                    "Assinatura SHA-1 do APK diferente da registada no Firebase (Erro 28444). " +
+                        "Desinstale a versão antiga do app e instale o novo APK gerado pelo GitHub Actions."
+                )
+            } else {
+                onAuthCancelled()
+            }
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed", e)
             onAuthError(e.localizedMessage ?: "Falha ao autenticar com o Google.")
