@@ -3,24 +3,25 @@ package com.example.auth
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FlightTakeoff
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,12 +36,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
@@ -58,22 +62,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
-private const val FALLBACK_WEB_CLIENT_ID =
-    "363493350499-ens7nomrcs1qoc4va3qg5245kaek05sk.apps.googleusercontent.com"
-
 private fun resolveWebClientId(context: Context): String {
-    val resId = context.resources.getIdentifier(
-        "default_web_client_id",
-        "string",
-        context.packageName
-    )
-    if (resId != 0) {
-        val value = runCatching { context.getString(resId) }.getOrNull()
-        if (!value.isNullOrBlank()) {
-            return value
-        }
+    return try {
+        context.getString(R.string.default_web_client_id)
+    } catch (_: Exception) {
+        ""
     }
-    return FALLBACK_WEB_CLIENT_ID
 }
 
 fun attemptAutoSignIn(
@@ -222,117 +216,182 @@ fun LuxuryAuthGateScreen(onAuthSuccess: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.background,
-                        MaterialTheme.colorScheme.surface
-                    )
-                )
-            )
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+            .background(Color(0xFF0C0E17))
     ) {
-        Surface(
+        // Full screen commercial jetliner in sunset clouds
+        Image(
+            painter = painterResource(id = R.drawable.bg_aguiafly_login_backdrop),
+            contentDescription = "AguiaFly Luxury Aviation Background",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+
+        // Frosted Glass Content Container aligned at bottom/center matching reference
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 460.dp)
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                    shape = RoundedCornerShape(24.dp)
-                ),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            contentAlignment = Alignment.BottomCenter
         ) {
-            Column(
-                modifier = Modifier.padding(28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 420.dp)
+                    .padding(bottom = 12.dp)
+                    .testTag("auth_glass_card"),
+                shape = RoundedCornerShape(26.dp),
+                color = Color(0xFF161B29).copy(alpha = 0.55f),
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.22f)
+                ),
+                shadowElevation = 16.dp
             ) {
-                androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(id = R.drawable.aguiafly_official_logo),
-                    contentDescription = "AguiaFly Logo Oficial",
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(165.dp)
-                        .border(
-                            width = 1.5.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(18.dp)
-                        )
-                )
-                Text(
-                    text = "AGUIAFLY",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Plataforma Premium AguiaFly de Emissão Aérea NDC • Duffel & Stripe EUR (€)",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Button(
-                    onClick = {
-                        errorMessage = null
-                        isLoading = true
-                        onGoogleSignInClicked(
-                            context = context,
-                            credentialManager = credentialManager,
-                            onAuthSuccess = {
-                                isLoading = false
-                                onAuthSuccess()
-                            },
-                            onAuthError = { err ->
-                                isLoading = false
-                                errorMessage = err
-                            },
-                            scope = scope,
-                            onAuthCancelled = { isLoading = false }
-                        )
-                    },
-                    enabled = !isLoading,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
-                        .testTag("google_sign_in_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
+                        .padding(horizontal = 24.dp, vertical = 28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.VerifiedUser,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.size(10.dp))
+                    // Sculpted 3D Gold Eagle Emblem + AGUIAFLY Title
+                    Image(
+                        painter = painterResource(id = R.drawable.aguiafly_gold_emblem_clean),
+                        contentDescription = "AguiaFly Logo Oficial",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth(0.74f)
+                            .height(115.dp)
+                    )
+
+                    // Subtitle / Plataforma text in warm champagne gold
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Text(
-                            text = "Sign in with Google",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                            text = "Plataforma Premium AguiaFly de Emissão Aérea.",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                letterSpacing = 0.2.sp
+                            ),
+                            color = Color(0xFFE5C89C),
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "NDC • Duffel & Stripe EUR (€)",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Normal,
+                                letterSpacing = 0.4.sp
+                            ),
+                            color = Color(0xFFD4B789),
+                            textAlign = TextAlign.Center
                         )
                     }
-                }
-                if (!errorMessage.isNullOrBlank()) {
-                    Text(
-                        text = errorMessage!!,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center
-                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // White Pill Google Sign-In Button
+                    Surface(
+                        onClick = {
+                            if (!isLoading) {
+                                errorMessage = null
+                                isLoading = true
+                                onGoogleSignInClicked(
+                                    context = context,
+                                    credentialManager = credentialManager,
+                                    onAuthSuccess = {
+                                        isLoading = false
+                                        onAuthSuccess()
+                                    },
+                                    onAuthError = { err ->
+                                        isLoading = false
+                                        errorMessage = err
+                                    },
+                                    scope = scope,
+                                    onAuthCancelled = { isLoading = false }
+                                )
+                            }
+                        },
+                        enabled = !isLoading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("google_sign_in_button"),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White,
+                        shadowElevation = 6.dp
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = Color(0xFF4285F4),
+                                    strokeWidth = 2.5.dp
+                                )
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_google_logo),
+                                        contentDescription = "Google Logo",
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Text(
+                                            text = "Sign in with ",
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Normal,
+                                                color = Color(0xFF202124)
+                                            )
+                                        )
+                                        Text(
+                                            text = "Google",
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFF202124)
+                                            )
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Conexão Segura",
+                                        tint = Color(0xFFC59E48),
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (!errorMessage.isNullOrBlank()) {
+                        Text(
+                            text = errorMessage!!,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = Color(0xFFFF8A80),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }

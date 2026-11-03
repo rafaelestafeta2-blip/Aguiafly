@@ -145,7 +145,8 @@ class FlightRepository {
         destinationIata: String,
         departureDate: String,
         cabinClass: String,
-        markupConfig: MarkupConfig
+        markupConfig: MarkupConfig,
+        flexibleDatesWindowDays: Int = 3
     ): List<EnrichedFlightOffer> {
         if (isDuffelConfigured()) {
             try {
@@ -166,23 +167,82 @@ class FlightRepository {
                         )
                     )
                 )
-                val mapped = response.data.offers.take(12).map { offer ->
+                val allMapped = response.data.offers.map { offer ->
                     mapDuffelOffer(offer, cabinClass, markupConfig)
                 }
-                if (mapped.isNotEmpty()) return mapped
+                if (allMapped.isNotEmpty()) {
+                    // Ordena estritamente da menor tarifa final para a maior, preservando voos diretos e conexões reais
+                    return allMapped
+                        .sortedWith(
+                            compareBy<EnrichedFlightOffer> { it.pricing.displayFareBeforeAncillariesEur }
+                                .thenBy { it.stopsCount }
+                                .thenBy { it.durationMinutes }
+                        )
+                        .take(35)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w("FlightRepository", "Duffel API call failed, using European NDC catalog: ${e.message}")
+                Log.w("FlightRepository", "Duffel API call failed (flexible ±${flexibleDatesWindowDays}d), using European NDC catalog: ${e.message}")
             }
         }
         return buildEuropeanNdcCatalog(originIata, destinationIata, departureDate, cabinClass, markupConfig)
     }
 
     /**
+     * Constrói um EnrichedFlightOffer exato a partir de um TravelPromotionDeal para garantir
+     * que o valor exibido no banner do carrossel ou na notificação Push seja 100% idêntico no Checkout.
+     */
+    fun buildOfferFromDeal(
+        deal: TravelPromotionDeal,
+        markupConfig: MarkupConfig
+    ): EnrichedFlightOffer {
+        deal.matchedOffer?.let { existing ->
+            val updatedPricing = MarkupEngine.calculateBreakdown(existing.netFareEur, markupConfig)
+            return existing.copy(pricing = updatedPricing)
+        }
+        val spec = AircraftSpecsCatalog.resolveSpec("32Q", null)
+        val resolvedOriginCity = PlaceAutocompleteCatalog.resolveByIata(deal.originIata).cityName
+        val connectHub = if (deal.originIata.equals("BCN", true) || deal.destinationIata.equals("BCN", true)) {
+            "MAD (Madrid)"
+        } else {
+            "BCN (Barcelona)"
+        }
+        val pricing = MarkupEngine.calculateBreakdown(deal.netFareEur, markupConfig)
+        return EnrichedFlightOffer(
+            offerId = if (deal.id.startsWith("off_")) deal.id else "off_${deal.id}",
+            passengerId = "pas_promo_01",
+            airlineName = deal.airlineName,
+            airlineIata = deal.airlineIata,
+            flightNumber = "${deal.airlineIata}880",
+            originIata = deal.originIata,
+            originCity = resolvedOriginCity,
+            destinationIata = deal.destinationIata,
+            destinationCity = deal.destinationCity,
+            departureTimeFormatted = "09:30",
+            arrivalTimeFormatted = if (deal.isDirectFlight) "11:15" else "13:20",
+            departureIso = "${deal.departureDateIso}T09:30:00Z",
+            arrivalIso = if (deal.isDirectFlight) "${deal.departureDateIso}T11:15:00Z" else "${deal.departureDateIso}T13:20:00Z",
+            durationFormatted = if (deal.isDirectFlight) "1h 45m" else "3h 50m",
+            durationMinutes = if (deal.isDirectFlight) 105 else 230,
+            stopsCount = if (deal.isDirectFlight) 0 else 1,
+            stopoverHubsSummary = if (deal.isDirectFlight) "" else "via $connectHub",
+            totalConnectionMinutes = if (deal.isDirectFlight) 0 else 75,
+            cabinClass = "economy",
+            netFareEur = deal.netFareEur,
+            pricing = pricing,
+            aircraftSpec = spec,
+            includedBaggageSummary = "1x 23kg Despachada + 1x Cabine (Tarifa Promocional)",
+            cancellationPolicySummary = "Alteração Flexível • Tarifa Promocional NDC",
+            isLiveDuffelOffer = deal.id.startsWith("off_") && !deal.id.startsWith("off_deal_")
+        )
+    }
+
+    /**
      * Consulta as tarifas mais baixas do momento diretamente na Duffel NDC API
      * (ou catálogo de referência NDC verificado se o token Duffel estiver em sandbox/pendente).
-     * Aplica com rigor a fórmula oficial (€3.50 + 3.5% + Net) e mapeia escalas transparentemente.
+     * Aplica com rigor a fórmula oficial (€3.50 + 3.5% + Net) e vincula a oferta exata (matchedOffer)
+     * para que o preço no Carrossel, Push Notification e Checkout seja sempre 100% igual.
      */
     suspend fun fetchLivePromotionalDeals(
         currentOrigin: String,
@@ -212,25 +272,30 @@ class FlightRepository {
                     )
                     val rawOffers = resp.data.offers
                     if (rawOffers.isNotEmpty()) {
-                        val cheapestOffer = rawOffers.minByOrNull { it.totalAmount.toDoubleOrNull() ?: 999.0 }
-                        if (cheapestOffer != null) {
-                            val liveNet = cheapestOffer.totalAmount.toDoubleOrNull() ?: deal.netFareEur
-                            val pricing = MarkupEngine.calculateBreakdown(liveNet, markupConfig)
-                            val slice = cheapestOffer.slices.firstOrNull()
-                            val stopsCount = (slice?.segments?.size?.minus(1))?.coerceAtLeast(0) ?: 0
-                            val airline = cheapestOffer.owner.name.ifBlank { deal.airlineName }
-                            val carrierCode = cheapestOffer.owner.iataCode ?: deal.airlineIata
+                        // Prioriza o voo direto mais barato se existir, ou a menor tarifa geral da rota
+                        val directOffers = rawOffers.filter { (it.slices.firstOrNull()?.segments?.size ?: 1) <= 1 }
+                        val bestRawOffer = directOffers.minByOrNull { it.totalAmount.toDoubleOrNull() ?: 9999.0 }
+                            ?: rawOffers.minByOrNull { it.totalAmount.toDoubleOrNull() ?: 9999.0 }
+
+                        if (bestRawOffer != null) {
+                            val mappedOffer = mapDuffelOffer(bestRawOffer, "economy", markupConfig)
+                            val liveNet = mappedOffer.netFareEur
+                            val pricing = mappedOffer.pricing
+                            val stopsCount = mappedOffer.stopsCount
+                            val airline = mappedOffer.airlineName.ifBlank { deal.airlineName }
+                            val carrierCode = mappedOffer.airlineIata.ifBlank { deal.airlineIata }
                             val originalBenchmark = kotlin.math.round(liveNet * 1.85 * 100) / 100.0
                             val discountPct = (((originalBenchmark - pricing.grandTotalEur) / originalBenchmark) * 100).toInt().coerceIn(20, 65)
 
                             val badge = if (stopsCount == 0) {
-                                "🔥 VOO DIRETO NDC • -$discountPct%"
+                                "🔥 VOO DIRETO • -$discountPct%"
                             } else {
-                                "⚡ TARIFA COM ESCALA • -$discountPct%"
+                                val hub = mappedOffer.stopoverHubsSummary.ifBlank { "1 Escala" }
+                                "⚡ $hub • -$discountPct%"
                             }
 
                             deal.copy(
-                                id = cheapestOffer.id,
+                                id = mappedOffer.offerId,
                                 originIata = originPlace.iataCode,
                                 originCity = originPlace.cityName,
                                 netFareEur = liveNet,
@@ -241,31 +306,54 @@ class FlightRepository {
                                 airlineIata = carrierCode,
                                 isDirectFlight = stopsCount == 0,
                                 highlightBadge = badge,
-                                tagline = if (stopsCount == 0) "Voo direto verificado em tempo real via Duffel NDC" else "Melhor tarifa com 1 escala verificada ao vivo"
+                                tagline = if (stopsCount == 0) {
+                                    "Voo direto (${mappedOffer.durationFormatted}) • Tarifa final garantida"
+                                } else {
+                                    "Conexão ${mappedOffer.stopoverHubsSummary} (${mappedOffer.durationFormatted}) • Tarifa final garantida"
+                                },
+                                matchedOffer = mappedOffer
                             )
-                        } else deal
-                    } else deal
+                        } else {
+                            val pricing = MarkupEngine.calculateBreakdown(deal.netFareEur, markupConfig)
+                            val updatedDeal = deal.copy(
+                                originIata = originPlace.iataCode,
+                                originCity = originPlace.cityName,
+                                displayTotalEur = pricing.grandTotalEur
+                            )
+                            updatedDeal.copy(matchedOffer = buildOfferFromDeal(updatedDeal, markupConfig))
+                        }
+                    } else {
+                        val pricing = MarkupEngine.calculateBreakdown(deal.netFareEur, markupConfig)
+                        val updatedDeal = deal.copy(
+                            originIata = originPlace.iataCode,
+                            originCity = originPlace.cityName,
+                            displayTotalEur = pricing.grandTotalEur
+                        )
+                        updatedDeal.copy(matchedOffer = buildOfferFromDeal(updatedDeal, markupConfig))
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Log.w("FlightRepository", "Duffel live promo query failed for ${deal.destinationIata}: ${e.message}")
                     val pricing = MarkupEngine.calculateBreakdown(deal.netFareEur, markupConfig)
-                    deal.copy(
+                    val updatedDeal = deal.copy(
                         originIata = originPlace.iataCode,
                         originCity = originPlace.cityName,
                         displayTotalEur = pricing.grandTotalEur
                     )
+                    updatedDeal.copy(matchedOffer = buildOfferFromDeal(updatedDeal, markupConfig))
                 }
             }
         }
 
         return baseDeals.map { deal ->
             val pricing = MarkupEngine.calculateBreakdown(deal.netFareEur, markupConfig)
-            deal.copy(
+            val updatedDeal = deal.copy(
                 originIata = originPlace.iataCode,
                 originCity = originPlace.cityName,
                 displayTotalEur = pricing.grandTotalEur
             )
+            updatedDeal.copy(matchedOffer = buildOfferFromDeal(updatedDeal, markupConfig))
         }
     }
 
@@ -306,6 +394,15 @@ class FlightRepository {
                     IllegalArgumentException("Informe o número do Passaporte ou Cartão de Cidadão do passageiro.")
                 )
             }
+            val passportExpiryCheck = com.example.domain.security.PassportSecurityValidator.validateDocumentExpiry(
+                expiryDateIso = documentInfo.expiryDate,
+                referenceFlightDateIso = offer.departureIso.take(10)
+            )
+            if (!passportExpiryCheck.canProceedToIssueTicket) {
+                return Result.failure(
+                    IllegalArgumentException(passportExpiryCheck.helperMessage)
+                )
+            }
             if (!isStripePublishableConfigured() || !isStripeSecretConfigured()) {
                 return Result.failure(
                     IllegalStateException(
@@ -344,37 +441,55 @@ class FlightRepository {
             val finalPricing = MarkupEngine.calculateBreakdown(resolvedLiveOffer.netFareEur, markupConfig, ancillaries)
             val totalCents = (finalPricing.grandTotalEur * 100).toLong()
 
-            // 1. Tokeniza o cartão real digitado pelo cliente utilizando a Chave Publicável (STRIPE_PUBLISHABLE_KEY)
-            val tokenResult = tokenizeCard(
-                cardNumber = cardInput.cleanDigits,
-                expMonth = cardInput.expMonth,
-                expYear = cardInput.expYearFourDigits,
-                cvc = cardInput.cvc,
-                holderName = cardInput.cardholderName
+            // Proteção Anti-Duplicidade (Idempotência Transacional Stripe & Duffel)
+            val idempotencyKey = com.example.domain.security.TransactionIdempotencyGuard.buildIdempotencyKey(
+                userId = userId,
+                offerId = resolvedLiveOffer.offerId,
+                passengerFirstName = passengerFirstName,
+                passengerLastName = passengerLastName,
+                documentNumber = documentInfo.documentNumber,
+                amountCents = totalCents
             )
-            val stripeToken = tokenResult.getOrElse { err ->
-                return Result.failure(
-                    IllegalStateException("Falha ao tokenizar cartão na Stripe: ${err.localizedMessage}")
-                )
+            val duplicateError = com.example.domain.security.TransactionIdempotencyGuard.tryAcquireLock(idempotencyKey)
+            if (duplicateError != null) {
+                return Result.failure(IllegalStateException(duplicateError))
             }
 
-            // 2. Liquida o pagamento na Stripe com a Chave Secreta (STRIPE_SECRET_KEY) usando o token real do cartão
-            val paymentIntent = stripeApi.createEurPaymentIntentWithToken(
-                bearerSecretKey = "Bearer ${BuildConfig.STRIPE_SECRET_KEY}",
-                amountCents = totalCents,
-                cardToken = stripeToken.id,
-                receiptEmail = passengerEmail.trim(),
-                description = "AguiaFly ${resolvedLiveOffer.flightNumber} (${resolvedLiveOffer.originIata}-${resolvedLiveOffer.destinationIata}) [€3.50 + 3.5% + Tarifa Neta]",
-                duffelOfferId = resolvedLiveOffer.offerId,
-                netFareEur = String.format(java.util.Locale.US, "%.2f", finalPricing.netFareEur),
-                otaMarkupEur = String.format(java.util.Locale.US, "%.2f", finalPricing.totalMarkupEur),
-                pricingFormula = "€3.50 + 3.5% + Tarifa Neta"
-            )
-            if (paymentIntent.status != "succeeded") {
-                return Result.failure(
-                    IllegalStateException("Pagamento não confirmado pela Stripe (status: ${paymentIntent.status}).")
+            try {
+                // 1. Tokeniza o cartão real digitado pelo cliente utilizando a Chave Publicável (STRIPE_PUBLISHABLE_KEY)
+                val tokenResult = tokenizeCard(
+                    cardNumber = cardInput.cleanDigits,
+                    expMonth = cardInput.expMonth,
+                    expYear = cardInput.expYearFourDigits,
+                    cvc = cardInput.cvc,
+                    holderName = cardInput.cardholderName
                 )
-            }
+                val stripeToken = tokenResult.getOrElse { err ->
+                    com.example.domain.security.TransactionIdempotencyGuard.releaseOnFailure(idempotencyKey)
+                    return Result.failure(
+                        IllegalStateException("Falha ao tokenizar cartão na Stripe: ${err.localizedMessage}")
+                    )
+                }
+
+                // 2. Liquida o pagamento na Stripe com a Chave Secreta (STRIPE_SECRET_KEY) + Idempotency-Key
+                val paymentIntent = stripeApi.createEurPaymentIntentWithToken(
+                    bearerSecretKey = "Bearer ${BuildConfig.STRIPE_SECRET_KEY}",
+                    idempotencyKey = idempotencyKey,
+                    amountCents = totalCents,
+                    cardToken = stripeToken.id,
+                    receiptEmail = passengerEmail.trim(),
+                    description = "AguiaFly ${resolvedLiveOffer.flightNumber} (${resolvedLiveOffer.originIata}-${resolvedLiveOffer.destinationIata}) [€3.50 + 3.5% + Tarifa Neta]",
+                    duffelOfferId = resolvedLiveOffer.offerId,
+                    netFareEur = String.format(java.util.Locale.US, "%.2f", finalPricing.netFareEur),
+                    otaMarkupEur = String.format(java.util.Locale.US, "%.2f", finalPricing.totalMarkupEur),
+                    pricingFormula = "€3.50 + 3.5% + Tarifa Neta"
+                )
+                if (paymentIntent.status != "succeeded") {
+                    com.example.domain.security.TransactionIdempotencyGuard.releaseOnFailure(idempotencyKey)
+                    return Result.failure(
+                        IllegalStateException("Pagamento não confirmado pela Stripe (status: ${paymentIntent.status}).")
+                    )
+                }
 
             // 3. Emite a Ordem Instantânea real na Duffel NDC API
             val orderResp = duffelApi.createInstantOrder(
@@ -422,31 +537,37 @@ class FlightRepository {
                 docInfo = documentInfo
             )
 
-            Result.success(
-                IssuedTicket(
-                    userId = userId,
-                    orderId = orderId,
-                    bookingReference = bookingRef,
-                    passengerName = "$passengerFirstName $passengerLastName".uppercase(),
-                    originIata = offer.originIata,
-                    originCity = offer.originCity,
-                    destinationIata = offer.destinationIata,
-                    destinationCity = offer.destinationCity,
-                    departureIso = offer.departureIso,
-                    arrivalIso = offer.arrivalIso,
-                    airlineName = offer.airlineName,
-                    flightNumber = offer.flightNumber,
-                    aircraftName = offer.aircraftSpec.fullName,
-                    cabinClass = offer.cabinClass,
-                    seatDesignator = resolvedSeatLabel,
-                    netAmountEur = finalPricing.netFareEur,
-                    markupEur = finalPricing.totalMarkupEur,
-                    ancillariesEur = finalPricing.totalAncillariesEur,
-                    totalChargedEur = finalPricing.grandTotalEur,
-                    iataBarcodePayload = enrichedBcbp,
-                    addedToGoogleWallet = false
+                com.example.domain.security.TransactionIdempotencyGuard.markCompleted(idempotencyKey)
+
+                Result.success(
+                    IssuedTicket(
+                        userId = userId,
+                        orderId = orderId,
+                        bookingReference = bookingRef,
+                        passengerName = "$passengerFirstName $passengerLastName".uppercase(),
+                        originIata = offer.originIata,
+                        originCity = offer.originCity,
+                        destinationIata = offer.destinationIata,
+                        destinationCity = offer.destinationCity,
+                        departureIso = offer.departureIso,
+                        arrivalIso = offer.arrivalIso,
+                        airlineName = offer.airlineName,
+                        flightNumber = offer.flightNumber,
+                        aircraftName = offer.aircraftSpec.fullName,
+                        cabinClass = offer.cabinClass,
+                        seatDesignator = resolvedSeatLabel,
+                        netAmountEur = finalPricing.netFareEur,
+                        markupEur = finalPricing.totalMarkupEur,
+                        ancillariesEur = finalPricing.totalAncillariesEur,
+                        totalChargedEur = finalPricing.grandTotalEur,
+                        iataBarcodePayload = enrichedBcbp,
+                        addedToGoogleWallet = false
+                    )
                 )
-            )
+            } catch (inner: Exception) {
+                com.example.domain.security.TransactionIdempotencyGuard.releaseOnFailure(idempotencyKey)
+                throw inner
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -581,6 +702,47 @@ class FlightRepository {
         }
     }
 
+    private fun parseIsoDurationToMinutesAndLabel(isoDuration: String?, stopsCount: Int): Pair<Int, String> {
+        if (isoDuration.isNullOrBlank()) {
+            val fallbackMins = 120 + (stopsCount * 85)
+            return fallbackMins to "${fallbackMins / 60}h ${(fallbackMins % 60).toString().padStart(2, '0')}m"
+        }
+        val days = Regex("(\\d+)D").find(isoDuration)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val hours = Regex("(\\d+)H").find(isoDuration)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val mins = Regex("(\\d+)M").find(isoDuration)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val totalHours = days * 24 + hours
+        val totalMinutes = (totalHours * 60 + mins).coerceAtLeast(35)
+        val label = if (totalHours > 0 && mins > 0) {
+            "${totalHours}h ${mins}m"
+        } else if (totalHours > 0) {
+            "${totalHours}h 00m"
+        } else {
+            "${mins}m"
+        }
+        return totalMinutes to label
+    }
+
+    private fun calculateLayoverMinutesBetweenSegments(segments: List<com.example.data.model.DuffelSegment>): Int {
+        if (segments.size <= 1) return 0
+        var totalLayover = 0
+        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        for (i in 0 until segments.size - 1) {
+            try {
+                val arrStr = segments[i].arrivingAt.take(19)
+                val depNextStr = segments[i + 1].departingAt.take(19)
+                val arrDate = fmt.parse(arrStr)
+                val depNextDate = fmt.parse(depNextStr)
+                if (arrDate != null && depNextDate != null) {
+                    val diffMins = ((depNextDate.time - arrDate.time) / 60_000L).toInt()
+                    if (diffMins > 0) totalLayover += diffMins
+                }
+            } catch (_: Exception) {
+                totalLayover += 75
+            }
+        }
+        return if (totalLayover > 0) totalLayover else (segments.size - 1) * 75
+    }
+
     private fun mapDuffelOffer(
         offer: DuffelOffer,
         cabinClass: String,
@@ -591,32 +753,65 @@ class FlightRepository {
         val firstSeg = segments.firstOrNull()
         val lastSeg = segments.lastOrNull() ?: firstSeg
         val stopsCount = (segments.size - 1).coerceAtLeast(0)
-        val connectionMinutes = if (stopsCount > 0) stopsCount * 75 else 0
-        val netFare = offer.totalAmount.toDoubleOrNull() ?: 340.0
+        val connectionMinutes = calculateLayoverMinutesBetweenSegments(segments)
+        val (durationMins, durationLabel) = parseIsoDurationToMinutesAndLabel(slice?.duration, stopsCount)
+
+        // Extrai os aeroportos reais de conexão a partir dos segmentos retornados pela Duffel API (ex: BCN, MAD, PMI, LIS, CDG)
+        val realStopoverHubs = if (segments.size > 1) {
+            segments.dropLast(1).mapNotNull { seg ->
+                val hubPlace = seg.destination
+                val iata = hubPlace?.iataCode?.uppercase()
+                if (!iata.isNullOrBlank()) {
+                    val city = hubPlace.cityName?.takeIf { it.isNotBlank() }
+                        ?: PlaceAutocompleteCatalog.resolveByIata(iata).cityName
+                    "$iata ($city)"
+                } else null
+            }.distinct()
+        } else emptyList()
+
+        val stopoverSummary = when {
+            stopsCount == 0 -> ""
+            realStopoverHubs.isNotEmpty() -> "via ${realStopoverHubs.joinToString(", ")}"
+            else -> {
+                val origCode = slice?.origin?.iataCode?.uppercase() ?: "IBZ"
+                val destCode = slice?.destination?.iataCode?.uppercase() ?: "CDG"
+                val defaultHub = if (origCode == "BCN" || destCode == "BCN") "MAD (Madrid)" else "BCN (Barcelona)"
+                "via $defaultHub"
+            }
+        }
+
+        val netFare = offer.totalAmount.toDoubleOrNull() ?: 120.0
         val spec = AircraftSpecsCatalog.resolveSpec(firstSeg?.aircraft?.iataCode, firstSeg?.aircraft?.name)
         val depIso = firstSeg?.departingAt ?: "2026-11-15T09:15:00"
         val arrIso = lastSeg?.arrivingAt ?: "2026-11-15T12:45:00"
-        val airlineCode = offer.owner.iataCode ?: "AF"
+        val airlineCode = offer.owner.iataCode ?: firstSeg?.operatingCarrier?.iataCode ?: "VY"
+        val airlineName = offer.owner.name.ifBlank { firstSeg?.operatingCarrier?.name ?: "Vueling Airlines" }
         val fltNum = firstSeg?.flightNumber?.let { "$airlineCode$it" } ?: "${airlineCode}1024"
+        val origIata = slice?.origin?.iataCode ?: "IBZ"
+        val destIata = slice?.destination?.iataCode ?: "BCN"
+        val origCity = slice?.origin?.cityName?.takeIf { it.isNotBlank() }
+            ?: PlaceAutocompleteCatalog.resolveByIata(origIata).cityName
+        val destCity = slice?.destination?.cityName?.takeIf { it.isNotBlank() }
+            ?: PlaceAutocompleteCatalog.resolveByIata(destIata).cityName
 
         return EnrichedFlightOffer(
             offerId = offer.id,
             passengerId = offer.passengers.firstOrNull()?.id ?: "pas_0001",
-            airlineName = offer.owner.name,
+            airlineName = airlineName,
             airlineIata = airlineCode,
             flightNumber = fltNum,
-            originIata = slice?.origin?.iataCode ?: "LIS",
-            originCity = slice?.origin?.cityName ?: slice?.origin?.name ?: "Lisboa",
-            destinationIata = slice?.destination?.iataCode ?: "CDG",
-            destinationCity = slice?.destination?.cityName ?: slice?.destination?.name ?: "Paris",
+            originIata = origIata,
+            originCity = origCity,
+            destinationIata = destIata,
+            destinationCity = destCity,
             departureTimeFormatted = depIso.substringAfter("T").take(5),
             arrivalTimeFormatted = arrIso.substringAfter("T").take(5),
             departureIso = depIso,
             arrivalIso = arrIso,
-            durationFormatted = slice?.duration?.removePrefix("PT")?.lowercase() ?: "2h 35m",
-            durationMinutes = 155 + connectionMinutes,
+            durationFormatted = durationLabel,
+            durationMinutes = durationMins,
             stopsCount = stopsCount,
-            stopoverHubsSummary = if (stopsCount == 1) "via MAD" else if (stopsCount > 1) "via MAD, FRA" else "",
+            stopoverHubsSummary = stopoverSummary,
             totalConnectionMinutes = connectionMinutes,
             cabinClass = cabinClass,
             netFareEur = netFare,
@@ -653,33 +848,42 @@ class FlightRepository {
         val destHub = EUROPEAN_HUBS.find { it.iata.equals(destinationIata, true) }
         val origCity = origHub?.city ?: PlaceAutocompleteCatalog.resolveByIata(originIata).cityName
         val destCity = destHub?.city ?: PlaceAutocompleteCatalog.resolveByIata(destinationIata).cityName
-        val cabinMultiplier = when (cabinClass) {
-            "first" -> 3.2
-            "business" -> 2.1
-            "premium_economy" -> 1.45
-            else -> 1.0
-        }
+        val cabinMultiplier = com.example.domain.concierge.AirportAndLoyaltyCatalog.cabinClassMultiplier(cabinClass)
+        val routeBaseEco = com.example.domain.concierge.AirportAndLoyaltyCatalog.resolveRouteBaseNetEcoEur(
+            originIata = originIata,
+            destinationIata = destinationIata
+        )
+        val dateMultiplier = com.example.domain.concierge.AirportAndLoyaltyCatalog.calculateDateFareMultiplier(
+            originIata = originIata,
+            destinationIata = destinationIata,
+            dateIso = departureDate
+        )
+        val routeScale = routeBaseEco / 48.0
 
-        val firstConnectHub = if (originIata.equals("MAD", true) || destinationIata.equals("MAD", true)) "BCN" else "MAD"
-        val secondConnectHub = if (originIata.equals("FRA", true) || destinationIata.equals("FRA", true)) "MUC" else "FRA"
-        val thirdConnectHub = if (originIata.equals("ZRH", true) || destinationIata.equals("ZRH", true)) "GVA" else "ZRH"
+        // Hubs reais de conexão (incluindo Barcelona BCN, Madrid MAD, Palma PMI e Lisboa LIS)
+        val bcnHub = if (originIata.equals("BCN", true) || destinationIata.equals("BCN", true)) "PMI (Palma de Maiorca)" else "BCN (Barcelona)"
+        val madHub = if (originIata.equals("MAD", true) || destinationIata.equals("MAD", true)) "VLC (Valência)" else "MAD (Madrid)"
+        val lisHub = if (originIata.equals("LIS", true) || destinationIata.equals("LIS", true)) "OPO (Porto)" else "LIS (Lisboa)"
 
         val templates = listOf(
-            // Voos Diretos (stopsCount = 0)
-            NdcCatalogTemplate("Air France", "AF", "359", "08:30", "11:05", 240.0, "2h 35m", 155, 0, "", 0),
-            NdcCatalogTemplate("TAP Air Portugal", "TP", "339", "14:20", "16:55", 215.0, "2h 35m", 155, 0, "", 0),
-            NdcCatalogTemplate("Swiss International", "LX", "32Q", "19:10", "21:55", 190.0, "2h 45m", 165, 0, "", 0),
-            // Voos Com Escalas (stopsCount = 1 ou 2) com tempo total de conexão
-            NdcCatalogTemplate("Lufthansa", "LH", "789", "09:40", "14:25", 178.0, "4h 45m", 285, 1, "via $secondConnectHub", 85),
-            NdcCatalogTemplate("Iberia NDC", "IB", "359", "12:15", "16:40", 162.0, "4h 25m", 265, 1, "via $firstConnectHub", 70),
-            NdcCatalogTemplate("KLM Royal Dutch", "KL", "32Q", "16:05", "22:35", 149.0, "6h 30m", 390, 2, "via $firstConnectHub, $thirdConnectHub", 135)
+            // Voos Diretos (stopsCount = 0) — menor tarifa garantida sincronizada com o Calendário Flexível
+            NdcCatalogTemplate("Vueling Airlines", "VY", "32Q", "07:45", "09:15", 48.0, "1h 30m", 90, 0, "", 0),
+            NdcCatalogTemplate("Iberia NDC", "IB", "32Q", "11:10", "12:55", 62.0, "1h 45m", 105, 0, "", 0),
+            NdcCatalogTemplate("TAP Air Portugal", "TP", "339", "14:20", "16:35", 89.0, "2h 15m", 135, 0, "", 0),
+            NdcCatalogTemplate("Air France", "AF", "359", "18:30", "20:50", 112.0, "2h 20m", 140, 0, "", 0),
+            // Voos Com Escala em Barcelona (BCN), Madrid (MAD) e Lisboa (LIS)
+            NdcCatalogTemplate("Vueling Connect", "VY", "32Q", "09:15", "12:45", 54.0, "3h 30m", 210, 1, "via $bcnHub", 65),
+            NdcCatalogTemplate("Iberia Express", "I2", "32Q", "12:30", "16:20", 68.0, "3h 50m", 230, 1, "via $madHub", 75),
+            NdcCatalogTemplate("TAP Connect", "TP", "32Q", "15:40", "20:05", 84.0, "4h 25m", 265, 1, "via $lisHub", 80),
+            NdcCatalogTemplate("Lufthansa", "LH", "789", "16:50", "22:15", 129.0, "5h 25m", 325, 2, "via $bcnHub, FRA (Frankfurt)", 120)
         )
 
         return templates.mapIndexed { idx, tpl ->
-            val netFare = kotlin.math.round(tpl.baseEcoEur * cabinMultiplier * 100.0) / 100.0
+            val scaledTemplateEco = kotlin.math.round(tpl.baseEcoEur * routeScale * 100.0) / 100.0
+            val netFare = kotlin.math.round(scaledTemplateEco * cabinMultiplier * dateMultiplier * 100.0) / 100.0
             val spec = AircraftSpecsCatalog.resolveSpec(tpl.acIata, null)
             EnrichedFlightOffer(
-                offerId = "off_duffel_ndc_${tpl.code.lowercase()}_${idx + 1}",
+                offerId = "off_duffel_ndc_${tpl.code.lowercase()}_${departureDate}_${idx + 1}",
                 passengerId = "pas_duffel_00${idx + 1}",
                 airlineName = tpl.airline,
                 airlineIata = tpl.code,
@@ -705,7 +909,7 @@ class FlightRepository {
                 cancellationPolicySummary = "Reembolso Flexível NDC (Taxa €35) • Alteração Gratuita",
                 isLiveDuffelOffer = false
             )
-        }
+        }.sortedBy { it.pricing.displayFareBeforeAncillariesEur }
     }
 
     private fun generateIataPnr(airline: String, orig: String, dest: String): String {

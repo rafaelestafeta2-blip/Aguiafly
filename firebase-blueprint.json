@@ -143,6 +143,147 @@
         "autoCheckInEnabled",
         "updatedAt"
       ]
+    },
+    "PassportVisualProfile": {
+      "title": "PassportVisualProfile",
+      "description": "Cloud-persisted visual profile, avatar photo, cover photo, cover theme preset, nationality, and passport stamp photo albums scoped to the authenticated user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "profilePhotoData": { "type": "string", "description": "Compact Base64 JPEG data URI or URL for user profile avatar" },
+        "coverPhotoData": { "type": "string", "description": "Compact Base64 JPEG data URI or URL for user cover photo" },
+        "coverPreset": { "type": "string", "description": "Selected executive cover theme preset name" },
+        "nationality": { "type": "string", "description": "Displayed nationality on the digital passport" },
+        "memberTierTitle": { "type": "string", "description": "Displayed member tier / bio subtitle" },
+        "passportCustomNumber": { "type": "string", "description": "Displayed passport number override" },
+        "stampPhotosJson": { "type": "string", "description": "JSON map of ticket stamp keys to compact Base64 JPEG photo lists" },
+        "stampNotesJson": { "type": "string", "description": "JSON map of ticket stamp keys to custom notes" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "profilePhotoData",
+        "coverPhotoData",
+        "coverPreset",
+        "nationality",
+        "memberTierTitle",
+        "passportCustomNumber",
+        "stampPhotosJson",
+        "stampNotesJson",
+        "updatedAt"
+      ]
+    },
+    "HolidayPackage": {
+      "title": "HolidayPackage",
+      "description": "Manually curated or partner agency holiday package and exclusive experience managed via AguiaFly Admin CMS.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner/Admin Firebase Auth UID" },
+        "packageCode": { "type": "string", "description": "Unique package reference code" },
+        "title": { "type": "string", "description": "Experience or holiday package title" },
+        "destinationCity": { "type": "string", "description": "Destination city and country" },
+        "destinationIata": { "type": "string", "description": "3-letter IATA airport code for destination" },
+        "durationLabel": { "type": "string", "description": "Formatted duration e.g. 7 Noites / 8 Dias" },
+        "durationNights": { "type": "number", "description": "Number of nights" },
+        "netPricePerPersonEur": { "type": "number", "description": "Partner net base price per person in EUR" },
+        "aguiaflyCommissionPercent": { "type": "number", "description": "AguiaFly commission percentage markup" },
+        "aguiaflyFixedFeeEur": { "type": "number", "description": "AguiaFly fixed fee per person in EUR" },
+        "finalPricePerPersonEur": { "type": "number", "description": "Final display price per person in EUR" },
+        "depositPercentage": { "type": "number", "description": "Allowed deposit percentage e.g. 25" },
+        "availableSpots": { "type": "number", "description": "Remaining available spots in inventory" },
+        "totalSpots": { "type": "number", "description": "Total capacity spots" },
+        "partnerAgencyName": { "type": "string", "description": "Partner agency or operator name" },
+        "sourceType": { "type": "string", "enum": ["MANUAL_CMS", "GETYOURGUIDE_API", "VIATOR_API", "CIVITATIS_API"] },
+        "badgeType": { "type": "string", "enum": ["TUDO_INCLUIDO", "EXCLUSIVO_AGUIAFLY", "ULTIMAS_VAGAS", "PARCEIRO_OFICIAL"] },
+        "inclusionsCsv": { "type": "string", "description": "Comma-separated inclusion codes: FLIGHT,HOTEL,MEALS,GUIDE,TRANSFERS" },
+        "galleryPhotosJson": { "type": "string", "description": "JSON array of HD photo URLs" },
+        "itineraryDaysJson": { "type": "string", "description": "JSON array of day-by-day itinerary items" },
+        "routeWaypointsJson": { "type": "string", "description": "JSON array of interactive map waypoints" },
+        "isActive": { "type": "boolean", "description": "Whether package is active in catalog" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "packageCode",
+        "title",
+        "destinationCity",
+        "destinationIata",
+        "durationLabel",
+        "durationNights",
+        "netPricePerPersonEur",
+        "aguiaflyCommissionPercent",
+        "aguiaflyFixedFeeEur",
+        "finalPricePerPersonEur",
+        "depositPercentage",
+        "availableSpots",
+        "totalSpots",
+        "partnerAgencyName",
+        "sourceType",
+        "badgeType",
+        "inclusionsCsv",
+        "galleryPhotosJson",
+        "itineraryDaysJson",
+        "routeWaypointsJson",
+        "isActive",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PackageBooking": {
+      "title": "PackageBooking",
+      "description": "Direct Stripe checkout booking or reservation deposit for a holiday package or partner API experience.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "bookingCode": { "type": "string", "description": "6-8 char confirmation code" },
+        "packageId": { "type": "string", "description": "Referenced package ID" },
+        "packageTitle": { "type": "string", "description": "Package title" },
+        "destinationCity": { "type": "string", "description": "Destination city" },
+        "destinationIata": { "type": "string", "description": "Destination IATA code" },
+        "durationLabel": { "type": "string", "description": "Duration label e.g. 7 Noites" },
+        "sourceType": { "type": "string", "enum": ["MANUAL_CMS", "GETYOURGUIDE_API", "VIATOR_API", "CIVITATIS_API"] },
+        "partnerName": { "type": "string", "description": "Partner agency or API provider name" },
+        "partnerConfirmationCode": { "type": "string", "description": "Partner confirmation reference" },
+        "travelerFullName": { "type": "string", "description": "Lead traveler full name" },
+        "travelerEmail": { "type": "string", "description": "Lead traveler email" },
+        "travelerPhone": { "type": "string", "description": "Lead traveler phone" },
+        "guestsCount": { "type": "number", "description": "Number of booked spots/guests" },
+        "paymentMode": { "type": "string", "enum": ["FULL_PAYMENT", "DEPOSIT_SIGNAL"] },
+        "totalPackageGrossEur": { "type": "number", "description": "Total package price in EUR" },
+        "amountChargedNowEur": { "type": "number", "description": "Amount charged via Stripe now in EUR" },
+        "remainingBalanceEur": { "type": "number", "description": "Remaining balance due in EUR" },
+        "aguiaflyCommissionEur": { "type": "number", "description": "Total AguiaFly commission included in EUR" },
+        "stripeChargeId": { "type": "string", "description": "Stripe charge or payment intent ID" },
+        "status": { "type": "string", "enum": ["CONFIRMED", "DEPOSIT_PAID", "CANCELLED"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId",
+        "bookingCode",
+        "packageId",
+        "packageTitle",
+        "destinationCity",
+        "destinationIata",
+        "durationLabel",
+        "sourceType",
+        "partnerName",
+        "partnerConfirmationCode",
+        "travelerFullName",
+        "travelerEmail",
+        "travelerPhone",
+        "guestsCount",
+        "paymentMode",
+        "totalPackageGrossEur",
+        "amountChargedNowEur",
+        "remainingBalanceEur",
+        "aguiaflyCommissionEur",
+        "stripeChargeId",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -161,6 +302,18 @@
     "/traveler_profiles/{userId}": {
       "schema": { "$ref": "#/entities/TravelerProfile" },
       "description": "Saved traveler profile vault per authenticated user"
+    },
+    "/passport_profiles/{userId}": {
+      "schema": { "$ref": "#/entities/PassportVisualProfile" },
+      "description": "Cloud-saved profile photo, cover photo, cover preset, and passport stamp photos per authenticated user"
+    },
+    "/holiday_packages/{packageId}": {
+      "schema": { "$ref": "#/entities/HolidayPackage" },
+      "description": "Admin CMS holiday packages and curated partner experiences"
+    },
+    "/package_bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/PackageBooking" },
+      "description": "Direct Stripe bookings and reservation deposits for holiday packages and API experiences"
     }
   }
 }

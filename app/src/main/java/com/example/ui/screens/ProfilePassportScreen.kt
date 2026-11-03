@@ -38,20 +38,27 @@ import androidx.compose.material.icons.filled.FlightTakeoff
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -107,6 +114,8 @@ fun ProfilePassportScreen(
     onSaveTravelerProfile: (SavedTravelerProfile) -> Unit,
     onNavigateToFlights: () -> Unit,
     onBackToHome: () -> Unit,
+    cloudPassportVisualProfile: com.example.data.model.CloudPassportVisualProfile? = null,
+    onSyncVisualStateToCloud: (com.example.data.model.LocalProfileVisualState) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBackToHome)
@@ -124,6 +133,7 @@ fun ProfilePassportScreen(
         val updated = transform(visualState)
         visualState = updated
         ProfilePassportStorage.saveState(context, currentUserId, updated)
+        onSyncVisualStateToCloud(updated)
     }
 
     // Campos de configuração do usuário (sincronizados exclusivamente com dados reais do Firebase Auth e Firestore)
@@ -179,6 +189,25 @@ fun ProfilePassportScreen(
         mutableStateOf(visualState.memberTierTitle)
     }
 
+    LaunchedEffect(cloudPassportVisualProfile) {
+        cloudPassportVisualProfile?.let { cloud ->
+            val restored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                ProfilePassportStorage.mergeAndRestoreCloudVisualProfile(
+                    context = context,
+                    userId = currentUserId,
+                    localState = visualState,
+                    cloud = cloud
+                )
+            }
+            visualState = restored
+            if (cloud.nationality.isNotBlank()) nationalityInput = cloud.nationality
+            if (cloud.memberTierTitle.isNotBlank()) memberTierInput = cloud.memberTierTitle
+            if (cloud.passportCustomNumber.isNotBlank() && documentNumber.isBlank()) {
+                documentNumber = cloud.passportCustomNumber
+            }
+        }
+    }
+
     LaunchedEffect(savedTravelerProfile) {
         savedTravelerProfile?.let { prof ->
             if (prof.firstName.isNotBlank()) firstName = prof.firstName
@@ -197,8 +226,12 @@ fun ProfilePassportScreen(
     var activeSectionTab by rememberSaveable { mutableStateOf(ProfileSectionTab.PASSPORT_GALLERY) }
     var galleryDisplayMode by rememberSaveable { mutableStateOf(PassportGalleryDisplayMode.CHRONOLOGICAL_TIMELINE) }
     var showCoverPresetsBar by rememberSaveable { mutableStateOf(false) }
+    var maskPassportInSettings by rememberSaveable { mutableStateOf(true) }
     var stampIdPendingPhoto by remember { mutableStateOf<String?>(null) }
     var saveFeedbackBanner by remember { mutableStateOf<String?>(null) }
+    val securityAuditReport = remember {
+        com.example.domain.security.AguiaFlySecurityAuditor.runRealtimeSecurityAudit(context)
+    }
 
     // Launchers Android Photo Picker (Zero-Permission Google Play Compliant)
     val profilePhotoPicker = rememberLauncherForActivityResult(
@@ -365,7 +398,10 @@ fun ProfilePassportScreen(
         if (activeSectionTab == ProfileSectionTab.PASSPORT_GALLERY) {
             // 3A. Cartão Oficial de Identificação do Passaporte AguiaFly (com MRZ)
             item {
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     OfficialPassportIdPageCard(
                         holderFullName = fullNameDisplay,
                         passportNumber = documentNumber,
@@ -382,6 +418,8 @@ fun ProfilePassportScreen(
                             )
                         }
                     )
+
+                    AguiaFlySecurityAuditCard(report = securityAuditReport)
                 }
             }
 
@@ -604,6 +642,22 @@ fun ProfilePassportScreen(
                                 value = documentNumber,
                                 onValueChange = { documentNumber = it.uppercase() },
                                 label = { Text("Nº do Passaporte / Doc") },
+                                visualTransformation = if (maskPassportInSettings && documentNumber.isNotBlank()) {
+                                    PasswordVisualTransformation()
+                                } else {
+                                    VisualTransformation.None
+                                },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = { maskPassportInSettings = !maskPassportInSettings },
+                                        modifier = Modifier.testTag("toggle_profile_passport_mask_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = if (maskPassportInSettings) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = if (maskPassportInSettings) "Mostrar passaporte" else "Ocultar passaporte"
+                                        )
+                                    }
+                                },
                                 singleLine = true,
                                 modifier = Modifier
                                     .weight(1f)
@@ -791,13 +845,158 @@ fun ProfilePassportScreen(
                                         autoCheckInEnabled = autoCheckInEnabled
                                     )
                                 )
-                                saveFeedbackBanner = "Perfil, Passaporte e Cofre de Viajante sincronizados no Firebase Firestore!"
+                                saveFeedbackBanner = "Perfil, Passaporte e Cofre de Viajante sincronizados e criptografados!"
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("save_profile_passport_button")
                         ) {
                             Text("Salvar Perfil e Passaporte Digital", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    AguiaFlySecurityAuditCard(report = securityAuditReport, initiallyExpanded = true)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AguiaFlySecurityAuditCard(
+    report: com.example.domain.security.SecurityAuditReport,
+    initiallyExpanded: Boolean = false
+) {
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
+    val emerald = Color(0xFF10B981)
+    val gold = Color(0xFFE5B84B)
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF071326)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, emerald.copy(alpha = 0.55f), RoundedCornerShape(18.dp))
+            .clickable { expanded = !expanded }
+            .testTag("aguiafly_security_audit_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        color = emerald.copy(alpha = 0.18f),
+                        shape = CircleShape,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.VerifiedUser,
+                                contentDescription = null,
+                                tint = emerald,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "Auditoria de Segurança AguiaFly Shield",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (expanded) {
+                                "Toque para recolher diagnóstico de blindagem"
+                            } else {
+                                "HTTPS/TLS 1.3 • AES-256 Keystore • Luhn PCI • FLAG_SECURE (Toque p/ detalhes)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF9EB4D8),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Surface(
+                    color = emerald.copy(alpha = 0.22f),
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.border(1.dp, emerald.copy(alpha = 0.65f), RoundedCornerShape(50))
+                ) {
+                    Text(
+                        text = "${report.activeCount}/${report.totalCount} ATIVOS",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF6EE7B7),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            if (expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    report.checks.forEach { check ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF0E1F3B))
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Security,
+                                    contentDescription = null,
+                                    tint = if (check.isVerified) emerald else gold,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = check.title,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = check.subtitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFBCCCE4),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = if (check.isVerified) emerald.copy(alpha = 0.2f) else gold.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = check.statusBadge,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (check.isVerified) Color(0xFF34D399) else gold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                )
+                            }
                         }
                     }
                 }

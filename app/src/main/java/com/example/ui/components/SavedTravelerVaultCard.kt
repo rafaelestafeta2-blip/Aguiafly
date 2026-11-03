@@ -99,7 +99,10 @@ fun SavedTravelerVaultCard(
                         )
                         Text(
                             text = if (hasSavedVault) {
-                                "Passaporte ${savedProfile?.documentNumber} e contato carregados da sua conta"
+                                val maskedDoc = com.example.domain.security.PassportSecurityValidator.maskDocumentNumber(
+                                    savedProfile?.documentNumber
+                                )
+                                "Passaporte $maskedDoc (protegido) e contato carregados da sua conta"
                             } else {
                                 "Guarde seu passaporte e telefone com segurança para as próximas viagens"
                             },

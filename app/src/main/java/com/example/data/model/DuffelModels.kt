@@ -63,6 +63,9 @@ data class DuffelSegment(
     @Json(name = "id") val id: String,
     @Json(name = "departing_at") val departingAt: String,
     @Json(name = "arriving_at") val arrivingAt: String,
+    @Json(name = "duration") val duration: String? = null,
+    @Json(name = "origin") val origin: DuffelPlace? = null,
+    @Json(name = "destination") val destination: DuffelPlace? = null,
     @Json(name = "marketing_carrier_flight_number") val flightNumber: String? = null,
     @Json(name = "aircraft") val aircraft: DuffelAircraft? = null,
     @Json(name = "operating_carrier") val operatingCarrier: DuffelCarrier? = null

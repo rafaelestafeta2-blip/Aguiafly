@@ -91,6 +91,72 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidPassportVisualProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.profilePhotoData is string && data.profilePhotoData.size() <= 350000 &&
+             data.coverPhotoData is string && data.coverPhotoData.size() <= 350000 &&
+             data.coverPreset is string && data.coverPreset.size() >= 1 && data.coverPreset.size() <= 40 &&
+             data.nationality is string && data.nationality.size() >= 1 && data.nationality.size() <= 80 &&
+             data.memberTierTitle is string && data.memberTierTitle.size() >= 1 && data.memberTierTitle.size() <= 120 &&
+             data.passportCustomNumber is string && data.passportCustomNumber.size() <= 40 &&
+             data.stampPhotosJson is string && data.stampPhotosJson.size() <= 450000 &&
+             data.stampNotesJson is string && data.stampNotesJson.size() <= 50000 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidHolidayPackage(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.packageCode is string && data.packageCode.size() >= 2 && data.packageCode.size() <= 40 &&
+             data.title is string && data.title.size() >= 3 && data.title.size() <= 160 &&
+             data.destinationCity is string && data.destinationCity.size() >= 2 && data.destinationCity.size() <= 100 &&
+             data.destinationIata is string && data.destinationIata.size() == 3 &&
+             data.durationLabel is string && data.durationLabel.size() >= 2 && data.durationLabel.size() <= 60 &&
+             isNumberInRange(data.durationNights, 0, 90) &&
+             isNumberInRange(data.netPricePerPersonEur, 1, 100000) &&
+             isNumberInRange(data.aguiaflyCommissionPercent, 0, 100) &&
+             isNumberInRange(data.aguiaflyFixedFeeEur, 0, 5000) &&
+             isNumberInRange(data.finalPricePerPersonEur, 1, 200000) &&
+             isNumberInRange(data.depositPercentage, 5, 100) &&
+             isNumberInRange(data.availableSpots, 0, 1000) &&
+             isNumberInRange(data.totalSpots, 1, 1000) &&
+             data.partnerAgencyName is string && data.partnerAgencyName.size() >= 2 && data.partnerAgencyName.size() <= 120 &&
+             data.sourceType is string && data.sourceType in ['MANUAL_CMS', 'GETYOURGUIDE_API', 'VIATOR_API', 'CIVITATIS_API'] &&
+             data.badgeType is string && data.badgeType in ['TUDO_INCLUIDO', 'EXCLUSIVO_AGUIAFLY', 'ULTIMAS_VAGAS', 'PARCEIRO_OFICIAL'] &&
+             data.inclusionsCsv is string && data.inclusionsCsv.size() <= 200 &&
+             data.galleryPhotosJson is string && data.galleryPhotosJson.size() >= 2 && data.galleryPhotosJson.size() <= 60000 &&
+             data.itineraryDaysJson is string && data.itineraryDaysJson.size() >= 2 && data.itineraryDaysJson.size() <= 120000 &&
+             data.routeWaypointsJson is string && data.routeWaypointsJson.size() >= 2 && data.routeWaypointsJson.size() <= 40000 &&
+             data.isActive is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPackageBooking(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.bookingCode is string && data.bookingCode.size() >= 4 && data.bookingCode.size() <= 24 &&
+             data.packageId is string && data.packageId.size() >= 1 && data.packageId.size() <= 120 &&
+             data.packageTitle is string && data.packageTitle.size() >= 2 && data.packageTitle.size() <= 160 &&
+             data.destinationCity is string && data.destinationCity.size() >= 2 && data.destinationCity.size() <= 100 &&
+             data.destinationIata is string && data.destinationIata.size() == 3 &&
+             data.durationLabel is string && data.durationLabel.size() >= 2 && data.durationLabel.size() <= 60 &&
+             data.sourceType is string && data.sourceType in ['MANUAL_CMS', 'GETYOURGUIDE_API', 'VIATOR_API', 'CIVITATIS_API'] &&
+             data.partnerName is string && data.partnerName.size() >= 2 && data.partnerName.size() <= 120 &&
+             data.partnerConfirmationCode is string && data.partnerConfirmationCode.size() >= 2 && data.partnerConfirmationCode.size() <= 60 &&
+             data.travelerFullName is string && data.travelerFullName.size() >= 2 && data.travelerFullName.size() <= 120 &&
+             data.travelerEmail is string && data.travelerEmail.size() >= 3 && data.travelerEmail.size() <= 120 &&
+             data.travelerPhone is string && data.travelerPhone.size() >= 5 && data.travelerPhone.size() <= 32 &&
+             isNumberInRange(data.guestsCount, 1, 50) &&
+             data.paymentMode is string && data.paymentMode in ['FULL_PAYMENT', 'DEPOSIT_SIGNAL'] &&
+             isNumberInRange(data.totalPackageGrossEur, 1, 500000) &&
+             isNumberInRange(data.amountChargedNowEur, 1, 500000) &&
+             isNumberInRange(data.remainingBalanceEur, 0, 500000) &&
+             isNumberInRange(data.aguiaflyCommissionEur, 0, 100000) &&
+             data.stripeChargeId is string && data.stripeChargeId.size() >= 4 && data.stripeChargeId.size() <= 120 &&
+             data.status is string && data.status in ['CONFIRMED', 'DEPOSIT_PAID', 'CANCELLED'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
     match /tickets/{ticketId} {
       allow get: if isSignedIn() && isValidId(ticketId) && existing().userId == request.auth.uid;
       allow list: if isSignedIn() && existing().userId == request.auth.uid;
@@ -231,6 +297,127 @@ service cloud.firestore {
                        ]);
 
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    match /passport_profiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll([
+                         'userId', 'profilePhotoData', 'coverPhotoData',
+                         'coverPreset', 'nationality', 'memberTierTitle',
+                         'passportCustomNumber', 'stampPhotosJson', 'stampNotesJson',
+                         'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'profilePhotoData', 'coverPhotoData',
+                         'coverPreset', 'nationality', 'memberTierTitle',
+                         'passportCustomNumber', 'stampPhotosJson', 'stampNotesJson',
+                         'updatedAt'
+                       ]) &&
+                       isValidPassportVisualProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidPassportVisualProfile(incoming()) &&
+                       request.auth.uid == userId &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'profilePhotoData', 'coverPhotoData',
+                         'coverPreset', 'nationality', 'memberTierTitle',
+                         'passportCustomNumber', 'stampPhotosJson', 'stampNotesJson',
+                         'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    match /holiday_packages/{packageId} {
+      allow get: if isSignedIn() && isValidId(packageId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(packageId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'packageCode', 'title', 'destinationCity', 'destinationIata',
+                         'durationLabel', 'durationNights', 'netPricePerPersonEur',
+                         'aguiaflyCommissionPercent', 'aguiaflyFixedFeeEur', 'finalPricePerPersonEur',
+                         'depositPercentage', 'availableSpots', 'totalSpots', 'partnerAgencyName',
+                         'sourceType', 'badgeType', 'inclusionsCsv', 'galleryPhotosJson',
+                         'itineraryDaysJson', 'routeWaypointsJson', 'isActive', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'packageCode', 'title', 'destinationCity', 'destinationIata',
+                         'durationLabel', 'durationNights', 'netPricePerPersonEur',
+                         'aguiaflyCommissionPercent', 'aguiaflyFixedFeeEur', 'finalPricePerPersonEur',
+                         'depositPercentage', 'availableSpots', 'totalSpots', 'partnerAgencyName',
+                         'sourceType', 'badgeType', 'inclusionsCsv', 'galleryPhotosJson',
+                         'itineraryDaysJson', 'routeWaypointsJson', 'isActive', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidHolidayPackage(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(packageId) &&
+                       isValidHolidayPackage(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().packageCode == existing().packageCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'title', 'destinationCity', 'destinationIata', 'durationLabel',
+                         'durationNights', 'netPricePerPersonEur', 'aguiaflyCommissionPercent',
+                         'aguiaflyFixedFeeEur', 'finalPricePerPersonEur', 'depositPercentage',
+                         'availableSpots', 'totalSpots', 'partnerAgencyName', 'badgeType',
+                         'inclusionsCsv', 'galleryPhotosJson', 'itineraryDaysJson',
+                         'routeWaypointsJson', 'isActive', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(packageId) && existing().userId == request.auth.uid;
+    }
+
+    match /package_bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(bookingId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'bookingCode', 'packageId', 'packageTitle',
+                         'destinationCity', 'destinationIata', 'durationLabel',
+                         'sourceType', 'partnerName', 'partnerConfirmationCode',
+                         'travelerFullName', 'travelerEmail', 'travelerPhone',
+                         'guestsCount', 'paymentMode', 'totalPackageGrossEur',
+                         'amountChargedNowEur', 'remainingBalanceEur', 'aguiaflyCommissionEur',
+                         'stripeChargeId', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'bookingCode', 'packageId', 'packageTitle',
+                         'destinationCity', 'destinationIata', 'durationLabel',
+                         'sourceType', 'partnerName', 'partnerConfirmationCode',
+                         'travelerFullName', 'travelerEmail', 'travelerPhone',
+                         'guestsCount', 'paymentMode', 'totalPackageGrossEur',
+                         'amountChargedNowEur', 'remainingBalanceEur', 'aguiaflyCommissionEur',
+                         'stripeChargeId', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidPackageBooking(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(bookingId) &&
+                       isValidPackageBooking(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().bookingCode == existing().bookingCode &&
+                       incoming().packageId == existing().packageId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'status', 'amountChargedNowEur', 'remainingBalanceEur', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(bookingId) && existing().userId == request.auth.uid;
     }
   }
 }

@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.model.CloudPassportVisualProfile
 import com.example.data.model.SavedTravelerProfile
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
@@ -113,6 +114,74 @@ class TravelerProfileFirestoreRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
+    fun observePassportVisualProfile(userId: String = requireUserId()): Flow<CloudPassportVisualProfile?> = flow {
+        val docRef = db.collection("passport_profiles").document(userId)
+        emitAll(
+            docRef.snapshots()
+                .map { snapshot ->
+                    if (!snapshot.exists()) {
+                        null
+                    } else {
+                        snapshot.toObject(
+                            CloudPassportVisualProfile::class.java,
+                            DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                        )
+                    }
+                }
+                .catch { error ->
+                    if (error is Exception) handleFirestoreError(error, OperationType.GET, docRef.path)
+                    throw error
+                }
+        )
+    }
+
+    suspend fun getPassportVisualProfile(userId: String = requireUserId()): Result<CloudPassportVisualProfile?> {
+        val docRef = db.collection("passport_profiles").document(userId)
+        return try {
+            val snap = docRef.get().await()
+            val visual = if (snap.exists()) {
+                snap.toObject(
+                    CloudPassportVisualProfile::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                )
+            } else {
+                null
+            }
+            Result.success(visual)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.GET, docRef.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun savePassportVisualProfile(profile: CloudPassportVisualProfile): Result<Unit> {
+        val uid = requireUserId()
+        val docRef = db.collection("passport_profiles").document(uid)
+        val payload = mapOf(
+            "userId" to uid,
+            "profilePhotoData" to profile.profilePhotoData.take(350_000),
+            "coverPhotoData" to profile.coverPhotoData.take(350_000),
+            "coverPreset" to profile.coverPreset.trim().ifBlank { "IMPERIAL_NAVY_GOLD" }.take(40),
+            "nationality" to profile.nationality.trim().ifBlank { "PORTUGAL / BRASIL" }.take(80),
+            "memberTierTitle" to profile.memberTierTitle.trim().ifBlank { "AguiaFly Executive Gold • Passaporte Oficial" }.take(120),
+            "passportCustomNumber" to profile.passportCustomNumber.trim().take(40),
+            "stampPhotosJson" to profile.stampPhotosJson.ifBlank { "{}" }.take(450_000),
+            "stampNotesJson" to profile.stampNotesJson.ifBlank { "{}" }.take(50_000),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        return try {
+            docRef.set(payload).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
             Result.failure(e)
         }
     }

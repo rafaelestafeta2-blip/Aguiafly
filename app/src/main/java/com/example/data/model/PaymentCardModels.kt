@@ -56,6 +56,9 @@ data class PaymentCardInput(
             return cleanDigits.chunked(4).joinToString(" ")
         }
 
+    val isLuhnChecksumValid: Boolean
+        get() = cleanDigits.length >= 13 && passesLuhnCheck(cleanDigits)
+
     val isCardNumberValid: Boolean
         get() {
             val minLen = if (brand == CardBrand.AMEX) 15 else 16
@@ -66,7 +69,13 @@ data class PaymentCardInput(
         get() {
             val month = expMonth.toIntOrNull() ?: return false
             val year = expYearFourDigits.toIntOrNull() ?: return false
-            return month in 1..12 && year in 2026..2045
+            if (month !in 1..12 || year !in 2024..2045) return false
+            return try {
+                val cardYm = java.time.YearMonth.of(year, month)
+                !cardYm.isBefore(java.time.YearMonth.now())
+            } catch (_: Exception) {
+                year >= 2026
+            }
         }
 
     val isCvcValid: Boolean
@@ -84,9 +93,9 @@ data class PaymentCardInput(
     val validationMessage: String?
         get() = when {
             cleanDigits.isEmpty() -> "Digite o número real do seu cartão de crédito"
-            !isCardNumberValid -> "Número de cartão inválido (verifique os dígitos)"
+            !isCardNumberValid -> "Número de cartão reprovado no teste matemático de Luhn (verifique os dígitos)"
             !isCardholderValid -> "Informe o nome impresso no cartão"
-            !isExpiryValid -> "Validade inválida (use MM/AA, ex: 08/29)"
+            !isExpiryValid -> "Cartão vencido ou data inválida (use MM/AA futuro, ex: 08/29)"
             !isCvcValid -> "Informe o código CVC de segurança (3 ou 4 dígitos)"
             else -> null
         }

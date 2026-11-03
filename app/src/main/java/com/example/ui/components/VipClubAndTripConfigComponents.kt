@@ -171,64 +171,83 @@ fun TripAndPassengerSelectorBar(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TripType.entries.forEach { option ->
-                    val selected = tripType == option
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onSelectTripType(option) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (option == TripType.ROUND_TRIP) Icons.Default.SyncAlt else Icons.Default.FlightTakeoff,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = option.label,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = gold,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier.testTag("trip_type_chip_${option.name.lowercase()}")
-                    )
-                }
+            TripType.entries.forEach { option ->
+                val selected = tripType == option
+                FilterChip(
+                    selected = selected,
+                    onClick = { onSelectTripType(option) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (option == TripType.ROUND_TRIP) Icons.Default.SyncAlt else Icons.Default.FlightTakeoff,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = option.label,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = gold,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                        selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("trip_type_chip_${option.name.lowercase()}")
+                )
             }
+        }
 
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, gold.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                .clickable { expandPassengers = !expandPassengers }
+                .testTag("passenger_selector_toggle")
+        ) {
+            Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, gold.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-                    .clickable { expandPassengers = !expandPassengers }
-                    .testTag("passenger_selector_toggle")
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Group,
                         contentDescription = "Passageiros",
                         tint = gold,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = passengers.summaryLabel,
+                        text = "Passageiros: ${passengers.summaryLabel}",
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
+                Text(
+                    text = if (expandPassengers) "Fechar" else "Alterar",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = gold,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
 

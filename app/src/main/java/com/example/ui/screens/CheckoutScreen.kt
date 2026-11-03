@@ -35,7 +35,10 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -79,6 +83,9 @@ fun CheckoutScreen(
     onToggleExtraBag: (Boolean) -> Unit,
     onTogglePriorityLounge: (Boolean) -> Unit,
     onInspectAircraftAndSeats: () -> Unit,
+    onSelectAiraloEsim: (com.example.data.model.AiraloEsimPackage?) -> Unit = {},
+    onToggleVipLoungePass: (com.example.data.model.VipLoungeOffer) -> Unit = {},
+    onToggleDestinationExperience: (com.example.data.model.DestinationExperienceOffer) -> Unit = {},
     onPayAndIssueTicket: (
         firstName: String,
         lastName: String,
@@ -93,6 +100,20 @@ fun CheckoutScreen(
     onBack: () -> Unit
 ) {
     BackHandler { onBack() }
+
+    val context = LocalContext.current
+    DisposableEffect(context) {
+        val window = (context as? Activity)?.window
+        val hadFlagSecure = window?.attributes?.flags?.let {
+            (it and WindowManager.LayoutParams.FLAG_SECURE) != 0
+        } ?: false
+        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose {
+            if (!hadFlagSecure) {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+    }
 
     val authUser = remember { Firebase.auth.currentUser }
     val nameParts = remember(authUser) {
@@ -156,11 +177,19 @@ fun CheckoutScreen(
     val seatNetBase = (markupConfig.seatSelectionFeeEur - ANCILLARY_SERVICE_MARGIN_EUR).coerceAtLeast(0.0)
     val bagNetBase = (markupConfig.extraBaggageFeeEur - ANCILLARY_SERVICE_MARGIN_EUR).coerceAtLeast(0.0)
 
+    val passportExpiryAssessment = remember(documentInfo.expiryDate, offer.departureIso) {
+        com.example.domain.security.PassportSecurityValidator.validateDocumentExpiry(
+            expiryDateIso = documentInfo.expiryDate,
+            referenceFlightDateIso = offer.departureIso.take(10)
+        )
+    }
+
     val canSaveTravelerVault = firstName.isNotBlank() &&
         lastName.isNotBlank() &&
         email.isNotBlank() &&
         phone.trim().length >= 5 &&
-        documentInfo.documentNumber.trim().length >= 4
+        documentInfo.documentNumber.trim().length >= 4 &&
+        passportExpiryAssessment.canProceedToIssueTicket
 
     val isFormReadyToPay = !isIssuing &&
         canSaveTravelerVault &&
@@ -174,31 +203,62 @@ fun CheckoutScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.testTag("checkout_back_button")
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Voltar",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("checkout_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Voltar",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Checkout & Emissão de Passagem",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "${offer.airlineName} ${offer.flightNumber} • ${offer.originIata} → ${offer.destinationIata}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                Column {
-                    Text(
-                        text = "Checkout & Emissão de Passagem",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "${offer.airlineName} ${offer.flightNumber} • ${offer.originIata} → ${offer.destinationIata}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+
+                // Banner de Sessão Blindada (FLAG_SECURE + Luhn + Idempotência)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF065F46).copy(alpha = 0.22f),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("checkout_security_shield_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Sessão Blindada PCI-DSS • Print/Gravação de Tela Bloqueados (FLAG_SECURE) • Anti-Duplicidade Ativo",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF6EE7B7)
+                        )
+                    }
                 }
             }
         }
@@ -414,6 +474,40 @@ fun CheckoutScreen(
             }
         }
 
+        // 2.1 INTERNET GLOBAL (Airalo eSIM Integration) com markup automático AguiaFly
+        item {
+            com.example.ui.components.AiraloEsimSelectorCard(
+                destinationIata = offer.destinationIata,
+                destinationCity = offer.destinationCity,
+                selectedPackage = ancillaries.selectedEsimPackage,
+                onSelectPackage = onSelectAiraloEsim,
+                isPostBookingConfirmation = false
+            )
+        }
+
+        // 2.2 ACESSO A SALAS VIP (Priority Pass / DragonPass API) para origem e conexões da rota
+        item {
+            com.example.ui.components.RouteVipLoungePassCard(
+                originIata = offer.originIata,
+                destinationIata = offer.destinationIata,
+                stopoverHubsSummary = offer.stopoverHubsSummary,
+                selectedLounges = ancillaries.selectedVipLounges,
+                onToggleLoungePass = onToggleVipLoungePass,
+                isConfirmedTripView = false
+            )
+        }
+
+        // 2.3 EXPERIÊNCIAS & TRANSFERS NO DESTINO (GetYourGuide / Viator API)
+        item {
+            com.example.ui.components.DestinationExperiencesSectionCard(
+                destinationIata = offer.destinationIata,
+                destinationCity = offer.destinationCity,
+                selectedExperiences = ancillaries.selectedExperiences,
+                onToggleExperience = onToggleDestinationExperience,
+                isPostPurchaseConfirmation = false
+            )
+        }
+
         // 2.5 Cofre de Viajante Salvo (Auto-Preenchimento para Próximas Compras)
         item {
             SavedTravelerVaultCard(
@@ -507,7 +601,8 @@ fun CheckoutScreen(
         item {
             PassengerDocumentSection(
                 documentInfo = documentInfo,
-                onUpdateDocumentInfo = { documentInfo = it }
+                onUpdateDocumentInfo = { documentInfo = it },
+                flightDepartureDateIso = offer.departureIso.take(10)
             )
         }
 

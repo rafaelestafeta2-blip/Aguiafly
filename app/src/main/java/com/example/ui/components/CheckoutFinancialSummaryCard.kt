@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -99,7 +98,7 @@ fun CheckoutFinancialSummaryCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Sem Custos Ocultos",
+                            text = "Taxa Base €3.50 + 3.5%",
                             style = MaterialTheme.typography.labelLarge,
                             color = emerald,
                             fontWeight = FontWeight.Bold
@@ -115,22 +114,22 @@ fun CheckoutFinancialSummaryCard(
                 highlight = false
             )
 
-            // 2. Taxa de Gestão & Emissão Unificada
+            // 2. Taxa de Gestão & Emissão Unificada Ultrabaixa (€3.50 + 3.5%)
             SummaryPriceRow(
-                label = "Taxa de Gestão e Emissão Unificada:",
+                label = "Taxa de Gestão e Emissão AguiaFly (€3.50 + 3.5%):",
                 amount = "+${MarkupEngine.formatEur(breakdown.totalMarkupEur)}",
                 highlight = true,
                 accentColor = aeroCyan
             )
 
             Text(
-                text = "Inclui processamento seguro do pagamento e emissão imediata do bilhete eletrónico IATA NDC sem custos ocultos.",
+                text = "Inclui processamento seguro Stripe e emissão imediata do bilhete eletrónico IATA NDC preservando a menor taxa do mercado.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             SummaryPriceRow(
-                label = "Subtotal da Passagem (Preço Base + Taxa de Gestão):",
+                label = "Subtotal da Passagem (Preço Base + Taxa €3.50 + 3.5%):",
                 amount = MarkupEngine.formatEur(breakdown.displayFareBeforeAncillariesEur),
                 highlight = true,
                 accentColor = MaterialTheme.colorScheme.onSurface
@@ -141,7 +140,7 @@ fun CheckoutFinancialSummaryCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
             )
 
-            // 3. Detalhamento Transparente de Serviços Opcionais (Ancillaries) com Margem de €2.00
+            // 3. Detalhamento Transparente de Serviços Opcionais & Módulo Premium
             if (ancillaries.isPaidSeatSelected) {
                 SummaryPriceRow(
                     label = "Seleção de Assento Premium (${ancillaries.seatDesignator} • Base ${MarkupEngine.formatEur(breakdown.seatBaseCostEur)} + Taxa Serviço ${MarkupEngine.formatEur(breakdown.seatServiceMarginEur)}):",
@@ -173,15 +172,45 @@ fun CheckoutFinancialSummaryCard(
                 )
             }
 
+            // 3.1 Airalo eSIM Global (Internet 5G no Destino)
+            ancillaries.selectedEsimPackage?.let { esim ->
+                SummaryPriceRow(
+                    label = "eSIM Global Airalo (${esim.planTitle} • Net ${MarkupEngine.formatEur(esim.wholesaleNetEur)} + Markup AguiaFly ${MarkupEngine.formatEur(esim.aguiaFlyCommissionEur)}):",
+                    amount = "+${MarkupEngine.formatEur(esim.retailPriceEur)}",
+                    highlight = true,
+                    accentColor = aeroCyan
+                )
+            }
+
+            // 3.2 Passes de Sala VIP (Priority Pass / DragonPass) nos Aeroportos da Rota
+            ancillaries.selectedVipLounges.forEach { lounge ->
+                SummaryPriceRow(
+                    label = "Passe Sala VIP ${lounge.airportIata} (${lounge.loungeName} • Net ${MarkupEngine.formatEur(lounge.wholesaleNetEur)} + Taxa ${MarkupEngine.formatEur(lounge.aguiaFlyMarginEur)}):",
+                    amount = "+${MarkupEngine.formatEur(lounge.retailPassPriceEur)}",
+                    highlight = true,
+                    accentColor = champagneGold
+                )
+            }
+
+            // 3.3 Experiências & Transfers no Destino (GetYourGuide / Viator)
+            ancillaries.selectedExperiences.forEach { exp ->
+                SummaryPriceRow(
+                    label = "${exp.category.labelPt}: ${exp.title} (Net ${MarkupEngine.formatEur(exp.netPartnerEur)} + Comissão ${MarkupEngine.formatEur(exp.aguiaFlyCommissionEur)}):",
+                    amount = "+${MarkupEngine.formatEur(exp.retailPriceEur)}",
+                    highlight = true,
+                    accentColor = emerald
+                )
+            }
+
             if (!hasAnyAncillary) {
                 Text(
-                    text = "Nenhum serviço opcional contratado • Margem de serviço sobre adicionais (${MarkupEngine.formatEur(ANCILLARY_SERVICE_MARGIN_EUR)}/item) não aplicada.",
+                    text = "Nenhum serviço opcional contratado • Apenas a tarifa do voo com taxa base ultrabaixa (€3.50 + 3.5%).",
                     style = MaterialTheme.typography.bodySmall,
                     color = emerald
                 )
-            } else if (breakdown.ancillaryServiceMarginTotalEur > 0.0) {
+            } else {
                 Text(
-                    text = "Inclui margem de serviço transparente de ${MarkupEngine.formatEur(ANCILLARY_SERVICE_MARGIN_EUR)} por bagagem despachada ou assento premium selecionado (Total margem adicionais: +${MarkupEngine.formatEur(breakdown.ancillaryServiceMarginTotalEur)}).",
+                    text = "Soma transparente de serviços premium selecionados (Total adicionais & ecossistema VIP: +${MarkupEngine.formatEur(breakdown.totalAncillariesEur)} • Margem/comissão: +${MarkupEngine.formatEur(breakdown.ancillaryServiceMarginTotalEur)}).",
                     style = MaterialTheme.typography.bodySmall,
                     color = aeroCyan
                 )
@@ -192,7 +221,7 @@ fun CheckoutFinancialSummaryCard(
                 color = champagneGold.copy(alpha = 0.45f)
             )
 
-            // 4. Valor Total Final a Pagar
+            // 4. Valor Total Final a Pagar no Stripe
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -200,16 +229,16 @@ fun CheckoutFinancialSummaryCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Valor Total Final a Pagar:",
+                        text = "Valor Total Final no Checkout Stripe:",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
                         text = if (!hasAnyAncillary) {
-                            "Preço Base + Taxa de Gestão Unificada (Zero custos extras de emissão)"
+                            "Tarifa Neta + Taxa Base AguiaFly (€3.50 + 3.5%)"
                         } else {
-                            "Preço Base + Taxa de Gestão Unificada + Opcionais contratados"
+                            "Tarifa Neta + Taxa Base (€3.50 + 3.5%) + Serviços Premium Selecionados"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

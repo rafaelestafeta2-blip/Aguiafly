@@ -73,6 +73,7 @@ interface StripePaymentService {
     @POST("v1/payment_intents")
     suspend fun createEurPaymentIntentWithToken(
         @Header("Authorization") bearerSecretKey: String,
+        @Header("Idempotency-Key") idempotencyKey: String,
         @Field("amount") amountCents: Long,
         @Field("currency") currency: String = "eur",
         @Field("confirm") confirm: Boolean = true,

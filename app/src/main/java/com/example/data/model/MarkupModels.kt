@@ -14,8 +14,11 @@ const val ANCILLARY_SERVICE_MARGIN_EUR = 2.00
  * Configuração da Fórmula de Lançamento AguiaFly:
  * - Taxa Dinâmica Unificada: €3.50 (fixo) + 3.5% sobre a tarifa neta do voo.
  *   Garante cobertura integral dos custos Stripe + Duffel Order Fee com lucro líquido positivo.
- * - Serviços Opcionais (Ancillaries): Margem de serviço transparente de €2.00 incluída sobre a
- *   contratação opcional de bagagem despachada (23kg) ou seleção de assentos premium.
+ * - Serviços Opcionais (Ancillaries & Módulo Premium):
+ *   - Bagagem despachada (23kg) ou seleção de assentos premium: margem de €2.00.
+ *   - Airalo eSIM Global: tarifa neta Airalo + comissão automática AguiaFly (€2.00 + 15%).
+ *   - Salas VIP Priority Pass / DragonPass: tarifa parceiro + margem AguiaFly (€4.00/passe).
+ *   - Passeios & Transfers GetYourGuide / Viator: tarifa parceiro + comissão transparente AguiaFly.
  */
 @IgnoreExtraProperties
 data class MarkupConfig(
@@ -30,18 +33,27 @@ data class MarkupConfig(
 )
 
 /**
- * Todos os adicionais (ancillaries) vêm desmarcados por padrão e o assento padrão
+ * Todos os adicionais (ancillaries e serviços premium) vêm desmarcados por padrão e o assento padrão
  * é "AUTO" (Assento Automático / Gratuito atribuído pela companhia no check-in, custo €0.00).
  */
 data class SelectedAncillaries(
     val seatDesignator: String = AUTO_FREE_SEAT,
     val includeExtraBaggage23Kg: Boolean = false,
-    val includePriorityLounge: Boolean = false
+    val includePriorityLounge: Boolean = false,
+    val selectedEsimPackage: AiraloEsimPackage? = null,
+    val selectedVipLounges: List<VipLoungeOffer> = emptyList(),
+    val selectedExperiences: List<DestinationExperienceOffer> = emptyList()
 ) {
     val isPaidSeatSelected: Boolean
         get() = seatDesignator.isNotBlank() &&
             !seatDesignator.equals(AUTO_FREE_SEAT, ignoreCase = true) &&
             !seatDesignator.startsWith("AUTO", ignoreCase = true)
+
+    fun isLoungeSelected(loungeId: String): Boolean =
+        selectedVipLounges.any { it.loungeId == loungeId }
+
+    fun isExperienceSelected(experienceId: String): Boolean =
+        selectedExperiences.any { it.experienceId == experienceId }
 }
 
 data class OfferPriceBreakdown(
@@ -57,6 +69,15 @@ data class OfferPriceBreakdown(
     val baggageServiceMarginEur: Double = 0.0, // €2.00 quando bagagem despachada é selecionada
     val baggageFeeEur: Double,
     val priorityBoardingFeeEur: Double,
+    val esimNetCostEur: Double = 0.0,
+    val esimCommissionEur: Double = 0.0,
+    val esimTotalFeeEur: Double = 0.0,
+    val vipLoungeNetCostEur: Double = 0.0,
+    val vipLoungeMarginEur: Double = 0.0,
+    val vipLoungeTotalFeeEur: Double = 0.0,
+    val experiencesNetCostEur: Double = 0.0,
+    val experiencesCommissionEur: Double = 0.0,
+    val experiencesTotalFeeEur: Double = 0.0,
     val ancillaryServiceMarginTotalEur: Double = 0.0,
     val totalAncillariesEur: Double,
     val estimatedGatewayAndDuffelCostEur: Double = 0.0,

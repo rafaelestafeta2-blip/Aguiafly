@@ -256,6 +256,42 @@ fun InteractiveCreditCardSection(
                 )
             }
 
+            if (cardInput.cleanDigits.length >= 13) {
+                val luhnOk = cardInput.isCardNumberValid
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (luhnOk) Color(0xFF065F46).copy(alpha = 0.25f) else Color(0xFF991B1B).copy(alpha = 0.25f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (luhnOk) Color(0xFF10B981).copy(alpha = 0.6f) else Color(0xFFEF4444).copy(alpha = 0.6f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (luhnOk) Icons.Default.CheckCircle else Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = if (luhnOk) Color(0xFF10B981) else Color(0xFFF87171),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = if (luhnOk) {
+                                "✓ Algoritmo de Luhn (Mod-10) Aprovado • ${cardInput.brand.displayName}"
+                            } else {
+                                "⚠ Dígito verificador Luhn inválido — confira a numeração do cartão"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (luhnOk) Color(0xFF34D399) else Color(0xFFFCA5A5)
+                        )
+                    }
+                }
+            }
+
             cardInput.validationMessage?.let { warning ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

@@ -14,15 +14,16 @@ import kotlin.math.roundToInt
 object MarkupEngine {
 
     /**
-     * Calcula o breakdown financeiro de lançamento do AguiaFly em EUR (€):
-     * 1. FÓRMULA DE MARKUP (Taxa de Gestão Unificada):
+     * Calcula o breakdown financeiro do AguiaFly em EUR (€):
+     * 1. FÓRMULA DE MARKUP BASE DA PASSAGEM (Taxa de Gestão Unificada Ultrabaixa):
      *    - €3.50 (fixo) + 3.5% sobre o valor da tarifa neta do voo.
      *    - Garante cobertura integral dos custos de processamento (Stripe) e emissão (Duffel Order Fee)
      *      com lucro líquido positivo em qualquer valor de bilhete.
-     * 2. SERVIÇOS OPCIONAIS (ANCILLARIES):
-     *    - Margem de serviço transparente de €2.00 sobre a contratação opcional de bagagem despachada
-     *      ou seleção de assentos premium.
-     *    - Se o cliente mantiver "Assento Automático / Gratuito" (AUTO) e nenhum adicional, o custo extra é €0.00.
+     * 2. SERVIÇOS OPCIONAIS & MÓDULO PREMIUM (100% Transparentes no Checkout do Stripe):
+     *    - Assento Premium / Bagagem 23kg: margem de €2.00 sobre a tarifa da cia aérea.
+     *    - eSIM Airalo Global: tarifa neta Airalo + comissão automática AguiaFly (€2.00 + 15%).
+     *    - Passe de Sala VIP (Priority Pass / DragonPass): tarifa parceiro + margem AguiaFly (€4.00/aeroporto).
+     *    - Experiências & Transfers (GetYourGuide / Viator): tarifa parceiro + comissão AguiaFly.
      */
     fun calculateBreakdown(
         netFareEur: Double,
@@ -65,8 +66,27 @@ object MarkupEngine {
             0.0
         }
 
-        val ancillaryMarginTotal = roundEur(seatMargin + baggageMargin)
-        val totalAncillaries = roundEur(seatFee + baggageFee + priorityFee)
+        // 1. Airalo eSIM Global (Net + Comissão automática AguiaFly)
+        val esimNet = roundEur(ancillaries.selectedEsimPackage?.wholesaleNetEur ?: 0.0)
+        val esimCommission = roundEur(ancillaries.selectedEsimPackage?.aguiaFlyCommissionEur ?: 0.0)
+        val esimTotal = roundEur(ancillaries.selectedEsimPackage?.retailPriceEur ?: 0.0)
+
+        // 2. Priority Pass / DragonPass Salas VIP (Origem e Conexões)
+        val loungeNet = roundEur(ancillaries.selectedVipLounges.sumOf { it.wholesaleNetEur })
+        val loungeMargin = roundEur(ancillaries.selectedVipLounges.sumOf { it.aguiaFlyMarginEur })
+        val loungeTotal = roundEur(ancillaries.selectedVipLounges.sumOf { it.retailPassPriceEur })
+
+        // 3. GetYourGuide / Viator Experiências & Transfers no Destino
+        val expNet = roundEur(ancillaries.selectedExperiences.sumOf { it.netPartnerEur })
+        val expCommission = roundEur(ancillaries.selectedExperiences.sumOf { it.aguiaFlyCommissionEur })
+        val expTotal = roundEur(ancillaries.selectedExperiences.sumOf { it.retailPriceEur })
+
+        val ancillaryMarginTotal = roundEur(
+            seatMargin + baggageMargin + esimCommission + loungeMargin + expCommission
+        )
+        val totalAncillaries = roundEur(
+            seatFee + baggageFee + priorityFee + esimTotal + loungeTotal + expTotal
+        )
         val grandTotal = roundEur(displayFareBeforeAncillaries + totalAncillaries)
 
         // Estimativa transparente de cobertura Stripe (~1.5% + €0.25) + Duffel Order Fee (~€2.00)
@@ -87,6 +107,15 @@ object MarkupEngine {
             baggageServiceMarginEur = baggageMargin,
             baggageFeeEur = baggageFee,
             priorityBoardingFeeEur = priorityFee,
+            esimNetCostEur = esimNet,
+            esimCommissionEur = esimCommission,
+            esimTotalFeeEur = esimTotal,
+            vipLoungeNetCostEur = loungeNet,
+            vipLoungeMarginEur = loungeMargin,
+            vipLoungeTotalFeeEur = loungeTotal,
+            experiencesNetCostEur = expNet,
+            experiencesCommissionEur = expCommission,
+            experiencesTotalFeeEur = expTotal,
             ancillaryServiceMarginTotalEur = ancillaryMarginTotal,
             totalAncillariesEur = totalAncillaries,
             estimatedGatewayAndDuffelCostEur = estimatedGatewayAndDuffel,
@@ -159,4 +188,3 @@ object MarkupEngine {
         return (value * 100.0).roundToInt() / 100.0
     }
 }
-

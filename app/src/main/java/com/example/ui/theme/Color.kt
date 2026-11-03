@@ -33,3 +33,10 @@ val AguiaSkyCyan = MetallicAeroBlue
 val AguiaCyanLight = BrushedGoldLight
 val AguiaNavyText = PlatinumText
 val AguiaMutedBlueGray = MutedSilver
+
+// Aliases adicionais para segurança de compilação
+val RoyalSapphireNavy = Color(0xFF0B1F3F)
+val GoldPriceBadgeBg = Color(0xFFE8C87A)
+val GoldPriceBadgeText = Color(0xFF07152B)
+val AguiaInactiveNav = Color(0xFFBFD4F2)
+val AguiaCardBorder = Color(0xFF1C3F78)

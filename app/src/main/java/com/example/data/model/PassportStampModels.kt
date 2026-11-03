@@ -1,11 +1,21 @@
 package com.example.data.model
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.DocumentId
+import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.ServerTimestamp
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -127,6 +137,21 @@ data class LocalProfileVisualState(
     val ticketNoteOverrides: Map<String, String> = emptyMap()
 )
 
+@IgnoreExtraProperties
+data class CloudPassportVisualProfile(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val profilePhotoData: String = "",
+    val coverPhotoData: String = "",
+    val coverPreset: String = PassportCoverPreset.IMPERIAL_NAVY_GOLD.id,
+    val nationality: String = "PORTUGAL / BRASIL",
+    val memberTierTitle: String = "AguiaFly Executive Gold • Passaporte Oficial",
+    val passportCustomNumber: String = "",
+    val stampPhotosJson: String = "{}",
+    val stampNotesJson: String = "{}",
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
 object CountryPassportCatalog {
 
     fun flagForCountry(countryName: String): String {
@@ -245,7 +270,8 @@ object ProfilePassportStorage {
 
     fun loadState(context: Context, userId: String): LocalProfileVisualState {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString("state_$userId", null) ?: return LocalProfileVisualState()
+        val storedRaw = prefs.getString("state_$userId", null) ?: return LocalProfileVisualState()
+        val raw = com.example.domain.security.KeystoreVaultCipher.decrypt(storedRaw).ifBlank { storedRaw }
         return try {
             val json = JSONObject(raw)
 
@@ -326,7 +352,8 @@ object ProfilePassportStorage {
             state.ticketNoteOverrides.forEach { (k, v) -> noteObj.put(k, v) }
             put("ticketNoteOverrides", noteObj)
         }
-        prefs.edit().putString("state_$userId", json.toString()).apply()
+        val encryptedPayload = com.example.domain.security.KeystoreVaultCipher.encrypt(json.toString())
+        prefs.edit().putString("state_$userId", encryptedPayload).apply()
     }
 
     /**
@@ -346,5 +373,228 @@ object ProfilePassportStorage {
         } catch (_: Exception) {
             sourceUri.toString()
         }
+    }
+
+    /**
+     * Converte uma imagem local (file:// ou content://) num Data URI JPEG compacto (Base64)
+     * para sincronizar no Firebase Firestore e sobreviver à desinstalação/reinstalação do app.
+     */
+    fun encodeImageUriToCloudDataUri(
+        context: Context,
+        uriString: String?,
+        maxDimension: Int = 340,
+        jpegQuality: Int = 62
+    ): String {
+        if (uriString.isNullOrBlank()) return ""
+        if (uriString.startsWith("data:image/") || uriString.startsWith("http://") || uriString.startsWith("https://")) {
+            return uriString.take(340_000)
+        }
+        return try {
+            val parsedUri = Uri.parse(uriString)
+            val rawBytes = when (parsedUri.scheme) {
+                "file" -> parsedUri.path?.let { File(it).takeIf { f -> f.exists() }?.readBytes() }
+                else -> context.contentResolver.openInputStream(parsedUri)?.use { it.readBytes() }
+            } ?: return ""
+
+            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+            val compressedBytes = if (decoded != null) {
+                val maxSide = max(decoded.width, decoded.height).coerceAtLeast(1)
+                val scaledBitmap = if (maxSide > maxDimension) {
+                    val ratio = maxDimension.toFloat() / maxSide.toFloat()
+                    val targetW = (decoded.width * ratio).roundToInt().coerceAtLeast(1)
+                    val targetH = (decoded.height * ratio).roundToInt().coerceAtLeast(1)
+                    Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+                } else {
+                    decoded
+                }
+                val out = ByteArrayOutputStream()
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, out)
+                out.toByteArray()
+            } else {
+                rawBytes.take(180_000).toByteArray()
+            }
+
+            val base64 = Base64.encodeToString(compressedBytes, Base64.NO_WRAP)
+            "data:image/jpeg;base64,$base64".take(340_000)
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * Materializa um Data URI Base64 vindo do Firestore num ficheiro físico local em `filesDir/passport_media`
+     * para que o Coil (`AsyncImage`) exiba a foto instantaneamente após reinstalar o app.
+     */
+    fun restoreCloudDataUriToLocalFile(
+        context: Context,
+        cloudData: String,
+        deterministicFileName: String
+    ): String? {
+        if (cloudData.isBlank()) return null
+        if (cloudData.startsWith("http://") || cloudData.startsWith("https://") || cloudData.startsWith("file://")) {
+            return cloudData
+        }
+        return try {
+            val commaIdx = cloudData.indexOf(',')
+            val base64Part = if (commaIdx >= 0) cloudData.substring(commaIdx + 1) else cloudData
+            val bytes = Base64.decode(base64Part, Base64.DEFAULT)
+            if (bytes.isEmpty()) return null
+            val dir = File(context.filesDir, "passport_media").apply { mkdirs() }
+            val destFile = File(dir, "$deterministicFileName.jpg")
+            FileOutputStream(destFile).use { it.write(bytes) }
+            Uri.fromFile(destFile).toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Constrói o payload CloudPassportVisualProfile pronto para salvar na coleção `/passport_profiles/{userId}`.
+     */
+    fun buildCloudVisualProfilePayload(
+        context: Context,
+        userId: String,
+        state: LocalProfileVisualState
+    ): CloudPassportVisualProfile {
+        val profileData = encodeImageUriToCloudDataUri(context, state.profilePhotoUri, maxDimension = 340, jpegQuality = 64)
+        val coverData = encodeImageUriToCloudDataUri(context, state.coverPhotoUri, maxDimension = 420, jpegQuality = 62)
+
+        val stampPhotosObj = JSONObject()
+        var currentPhotosBudgetChars = 0
+        state.ticketPhotoLists.forEach { (ticketKey, uriList) ->
+            val arr = JSONArray()
+            uriList.take(MAX_PHOTOS_PER_STAMP).forEach { uriStr ->
+                val encoded = encodeImageUriToCloudDataUri(context, uriStr, maxDimension = 220, jpegQuality = 54)
+                if (encoded.isNotBlank() && (currentPhotosBudgetChars + encoded.length) < 420_000) {
+                    arr.put(encoded)
+                    currentPhotosBudgetChars += encoded.length
+                }
+            }
+            if (arr.length() > 0) {
+                stampPhotosObj.put(ticketKey, arr)
+            }
+        }
+
+        val stampNotesObj = JSONObject()
+        state.ticketNoteOverrides.forEach { (k, v) ->
+            if (v.isNotBlank()) {
+                stampNotesObj.put(k, v.take(500))
+            }
+        }
+
+        return CloudPassportVisualProfile(
+            id = userId,
+            userId = userId,
+            profilePhotoData = profileData.take(350_000),
+            coverPhotoData = coverData.take(350_000),
+            coverPreset = state.coverPreset.id.take(40),
+            nationality = state.nationality.trim().ifBlank { "PORTUGAL / BRASIL" }.take(80),
+            memberTierTitle = state.memberTierTitle.trim().ifBlank { "AguiaFly Executive Gold • Passaporte Oficial" }.take(120),
+            passportCustomNumber = state.passportCustomNumber.trim().take(40),
+            stampPhotosJson = stampPhotosObj.toString().take(450_000),
+            stampNotesJson = stampNotesObj.toString().take(50_000)
+        )
+    }
+
+    /**
+     * Restaura do Firestore para o armazenamento local as fotos de perfil, capa, carimbos e configurações
+     * quando o utilizador reinstala o app ou entra noutro telemóvel.
+     */
+    fun mergeAndRestoreCloudVisualProfile(
+        context: Context,
+        userId: String,
+        localState: LocalProfileVisualState,
+        cloud: CloudPassportVisualProfile
+    ): LocalProfileVisualState {
+        val localProfileExists = localState.profilePhotoUri?.let { uriStr ->
+            if (uriStr.startsWith("file://")) {
+                Uri.parse(uriStr).path?.let { File(it).exists() } ?: false
+            } else {
+                true
+            }
+        } ?: false
+
+        val localCoverExists = localState.coverPhotoUri?.let { uriStr ->
+            if (uriStr.startsWith("file://")) {
+                Uri.parse(uriStr).path?.let { File(it).exists() } ?: false
+            } else {
+                true
+            }
+        } ?: false
+
+        val restoredProfileUri = if (localProfileExists) {
+            localState.profilePhotoUri
+        } else {
+            restoreCloudDataUriToLocalFile(context, cloud.profilePhotoData, "cloud_profile_${userId.take(12)}")
+        }
+
+        val restoredCoverUri = if (localCoverExists && cloud.coverPhotoData.isNotBlank()) {
+            localState.coverPhotoUri
+        } else if (cloud.coverPhotoData.isNotBlank()) {
+            restoreCloudDataUriToLocalFile(context, cloud.coverPhotoData, "cloud_cover_${userId.take(12)}")
+        } else {
+            null
+        }
+
+        val mergedPhotoLists = localState.ticketPhotoLists.toMutableMap()
+        val mergedPhotoOverrides = localState.ticketPhotoOverrides.toMutableMap()
+        try {
+            val cloudPhotosObj = JSONObject(cloud.stampPhotosJson.ifBlank { "{}" })
+            cloudPhotosObj.keys().forEach { ticketKey ->
+                val existingList = mergedPhotoLists[ticketKey].orEmpty().filter { uriStr ->
+                    if (uriStr.startsWith("file://")) {
+                        Uri.parse(uriStr).path?.let { File(it).exists() } ?: false
+                    } else {
+                        true
+                    }
+                }
+                if (existingList.isEmpty()) {
+                    val arr = cloudPhotosObj.optJSONArray(ticketKey) ?: JSONArray()
+                    val restoredList = mutableListOf<String>()
+                    for (i in 0 until arr.length()) {
+                        val rawData = arr.optString(i, "")
+                        val localUri = restoreCloudDataUriToLocalFile(
+                            context,
+                            rawData,
+                            "cloud_stamp_${ticketKey.takeLast(8)}_$i"
+                        )
+                        if (!localUri.isNullOrBlank()) {
+                            restoredList.add(localUri)
+                        }
+                    }
+                    if (restoredList.isNotEmpty()) {
+                        mergedPhotoLists[ticketKey] = restoredList.take(MAX_PHOTOS_PER_STAMP)
+                        mergedPhotoOverrides[ticketKey] = restoredList.first()
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val mergedNotes = localState.ticketNoteOverrides.toMutableMap()
+        try {
+            val cloudNotesObj = JSONObject(cloud.stampNotesJson.ifBlank { "{}" })
+            cloudNotesObj.keys().forEach { ticketKey ->
+                val note = cloudNotesObj.optString(ticketKey, "")
+                if (note.isNotBlank() && mergedNotes[ticketKey].isNullOrBlank()) {
+                    mergedNotes[ticketKey] = note
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val merged = localState.copy(
+            profilePhotoUri = restoredProfileUri ?: localState.profilePhotoUri,
+            coverPhotoUri = restoredCoverUri,
+            coverPreset = PassportCoverPreset.fromId(cloud.coverPreset),
+            nationality = cloud.nationality.ifBlank { localState.nationality },
+            memberTierTitle = cloud.memberTierTitle.ifBlank { localState.memberTierTitle },
+            passportCustomNumber = cloud.passportCustomNumber.ifBlank { localState.passportCustomNumber },
+            ticketPhotoLists = mergedPhotoLists,
+            ticketPhotoOverrides = mergedPhotoOverrides,
+            ticketNoteOverrides = mergedNotes
+        )
+        saveState(context, userId, merged)
+        return merged
     }
 }

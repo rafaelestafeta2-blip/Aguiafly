@@ -77,7 +77,13 @@ fun TicketsWalletScreen(
     confirmedCancellations: Map<String, OrderCancellationConfirmation> = emptyMap(),
     onRequestCancellationQuote: (IssuedTicket) -> Unit = {},
     onConfirmCancellationRefund: () -> Unit = {},
-    onDismissCancellationDialog: () -> Unit = {}
+    onDismissCancellationDialog: () -> Unit = {},
+    ticketEsimSelections: Map<String, com.example.data.model.AiraloEsimPackage> = emptyMap(),
+    ticketLoungeSelections: Map<String, List<com.example.data.model.VipLoungeOffer>> = emptyMap(),
+    ticketExperienceSelections: Map<String, List<com.example.data.model.DestinationExperienceOffer>> = emptyMap(),
+    onSelectTicketEsim: (IssuedTicket, com.example.data.model.AiraloEsimPackage?) -> Unit = { _, _ -> },
+    onToggleTicketLounge: (IssuedTicket, com.example.data.model.VipLoungeOffer) -> Unit = { _, _ -> },
+    onToggleTicketExperience: (IssuedTicket, com.example.data.model.DestinationExperienceOffer) -> Unit = { _, _ -> }
 ) {
     var walletDialogTicket by remember { mutableStateOf<IssuedTicket?>(null) }
     var pdfPreviewTicket by remember { mutableStateOf<IssuedTicket?>(null) }
@@ -127,7 +133,7 @@ fun TicketsWalletScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Bilhetes oficiais emitidos via IATA NDC, E-Ticket Executivo em PDF, Gestão de Cancelamento/Reembolso Duffel & Stripe e Wallet",
+                    text = "Bilhetes IATA NDC, Radar em Tempo Real (FlightAware), eSIM Global (Airalo), Salas VIP (Priority Pass) e Experiências no Destino",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -176,9 +182,16 @@ fun TicketsWalletScreen(
         } else {
             items(tickets, key = { it.id.ifBlank { it.orderId } }) { ticket ->
                 val ticketKey = ticket.id.ifBlank { ticket.orderId }
+                val bookingRefKey = ticket.bookingReference.ifBlank { ticketKey }
                 BoardingPassCard(
                     ticket = ticket,
                     cancellationConfirmation = confirmedCancellations[ticketKey],
+                    selectedEsim = ticketEsimSelections[bookingRefKey],
+                    selectedLounges = ticketLoungeSelections[bookingRefKey].orEmpty(),
+                    selectedExperiences = ticketExperienceSelections[bookingRefKey].orEmpty(),
+                    onSelectEsim = { pkg -> onSelectTicketEsim(ticket, pkg) },
+                    onToggleLounge = { lounge -> onToggleTicketLounge(ticket, lounge) },
+                    onToggleExperience = { exp -> onToggleTicketExperience(ticket, exp) },
                     onOpenWalletDialog = { walletDialogTicket = ticket },
                     onOpenPdfPreview = { pdfPreviewTicket = ticket },
                     onRequestVipSupport = { onRequestVipSupportForTicket(ticket) },
@@ -193,6 +206,12 @@ fun TicketsWalletScreen(
 private fun BoardingPassCard(
     ticket: IssuedTicket,
     cancellationConfirmation: OrderCancellationConfirmation?,
+    selectedEsim: com.example.data.model.AiraloEsimPackage?,
+    selectedLounges: List<com.example.data.model.VipLoungeOffer>,
+    selectedExperiences: List<com.example.data.model.DestinationExperienceOffer>,
+    onSelectEsim: (com.example.data.model.AiraloEsimPackage?) -> Unit,
+    onToggleLounge: (com.example.data.model.VipLoungeOffer) -> Unit,
+    onToggleExperience: (com.example.data.model.DestinationExperienceOffer) -> Unit,
     onOpenWalletDialog: () -> Unit,
     onOpenPdfPreview: () -> Unit,
     onRequestVipSupport: () -> Unit,
@@ -289,6 +308,36 @@ private fun BoardingPassCard(
                         destinationIata = ticket.destinationIata,
                         destinationCity = ticket.destinationCity,
                         flightNumber = ticket.flightNumber
+                    )
+
+                    // 3.6 ACESSO A SALAS VIP (Priority Pass / DragonPass API) para Origem e Conexões
+                    com.example.ui.components.RouteVipLoungePassCard(
+                        originIata = ticket.originIata,
+                        destinationIata = ticket.destinationIata,
+                        selectedLounges = selectedLounges,
+                        onToggleLoungePass = onToggleLounge,
+                        isConfirmedTripView = true,
+                        bookingReference = ticket.bookingReference
+                    )
+
+                    // 3.7 INTERNET GLOBAL 5G (Airalo eSIM Integration) na Confirmação da Reserva
+                    com.example.ui.components.AiraloEsimSelectorCard(
+                        destinationIata = ticket.destinationIata,
+                        destinationCity = ticket.destinationCity,
+                        selectedPackage = selectedEsim,
+                        onSelectPackage = onSelectEsim,
+                        isPostBookingConfirmation = true,
+                        bookingReference = ticket.bookingReference
+                    )
+
+                    // 3.8 EXPERIÊNCIAS NO DESTINO ("O que fazer em [Cidade de Destino]" - GetYourGuide / Viator)
+                    com.example.ui.components.DestinationExperiencesSectionCard(
+                        destinationIata = ticket.destinationIata,
+                        destinationCity = ticket.destinationCity,
+                        selectedExperiences = selectedExperiences,
+                        onToggleExperience = onToggleExperience,
+                        isPostPurchaseConfirmation = true,
+                        bookingReference = ticket.bookingReference
                     )
 
                     // Botão Expansível da Ficha Técnica & Fotos da Aeronave

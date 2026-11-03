@@ -253,3 +253,168 @@ test("Traveler profile vault: owner can create, read, update, and delete own pro
     aliceDb.collection("traveler_profiles").doc(ALICE_UID).delete()
   );
 });
+
+test("Passport visual profile: owner can save and update profile/cover photos and stamp albums; cross-user and ghost fields rejected", async () => {
+  const now = new Date(Date.now() - 2000);
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const payload = {
+    userId: ALICE_UID,
+    profilePhotoData: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/",
+    coverPhotoData: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/",
+    coverPreset: "IMPERIAL_NAVY_GOLD",
+    nationality: "PORTUGAL / BRASIL",
+    memberTierTitle: "AguiaFly Executive Gold",
+    passportCustomNumber: "PT99887766",
+    stampPhotosJson: '{"ord_1":["data:image/jpeg;base64,/9j/4AAQSkZ"]}',
+    stampNotesJson: '{"ord_1":"Viagem incrível a Ibiza"}',
+    updatedAt: now,
+  };
+
+  await assertSucceeds(
+    aliceDb.collection("passport_profiles").doc(ALICE_UID).set(payload)
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("passport_profiles").doc(ALICE_UID).get()
+  );
+
+  await assertFails(
+    bobDb.collection("passport_profiles").doc(ALICE_UID).get()
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("passport_profiles").doc(ALICE_UID).update({
+      coverPreset: "FIRST_CLASS_SUITE",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  await assertFails(
+    aliceDb.collection("passport_profiles").doc(ALICE_UID).update({
+      extraGhostField: "hack",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("passport_profiles").doc(ALICE_UID).delete()
+  );
+});
+
+test("Holiday packages (Admin CMS): owner can create, query, update inventory spots, and cross-user access is denied", async () => {
+  const now = new Date(Date.now() - 2000);
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const pkgPayload = {
+    userId: ALICE_UID,
+    packageCode: "AGF-MALDIVES-7N",
+    title: "Maldivas Overwater Villa & Hidroavião",
+    destinationCity: "Malé, Maldivas",
+    destinationIata: "MLE",
+    durationLabel: "7 Noites / 8 Dias",
+    durationNights: 7,
+    netPricePerPersonEur: 1850.0,
+    aguiaflyCommissionPercent: 12.0,
+    aguiaflyFixedFeeEur: 35.0,
+    finalPricePerPersonEur: 2107.0,
+    depositPercentage: 25,
+    availableSpots: 8,
+    totalSpots: 12,
+    partnerAgencyName: "Maldives Royal Atoll Collection",
+    sourceType: "MANUAL_CMS",
+    badgeType: "TUDO_INCLUIDO",
+    inclusionsCsv: "FLIGHT,HOTEL,MEALS,GUIDE,TRANSFERS",
+    galleryPhotosJson: '["https://images.unsplash.com/photo-1514282401047-d79a71a590e8"]',
+    itineraryDaysJson: '[{"day":1,"title":"Chegada em Malé"}]',
+    routeWaypointsJson: '[{"label":"Malé","lat":4.1755,"lon":73.5093}]',
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await assertSucceeds(
+    aliceDb.collection("holiday_packages").doc("pkg_maldives_1").set(pkgPayload)
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("holiday_packages").where("userId", "==", ALICE_UID).get()
+  );
+
+  await assertFails(
+    bobDb.collection("holiday_packages").doc("pkg_maldives_1").get()
+  );
+
+  // Decrement inventory spots on booking
+  await assertSucceeds(
+    aliceDb.collection("holiday_packages").doc("pkg_maldives_1").update({
+      availableSpots: 6,
+      badgeType: "ULTIMAS_VAGAS",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // Ghost field rejected
+  await assertFails(
+    aliceDb.collection("holiday_packages").doc("pkg_maldives_1").update({
+      hackField: true,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+});
+
+test("Package bookings: owner can create direct Stripe booking or deposit, query own bookings, and cross-user is denied", async () => {
+  const now = new Date(Date.now() - 2000);
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const bookingPayload = {
+    userId: ALICE_UID,
+    bookingCode: "AGFPKG99",
+    packageId: "pkg_maldives_1",
+    packageTitle: "Maldivas Overwater Villa & Hidroavião",
+    destinationCity: "Malé, Maldivas",
+    destinationIata: "MLE",
+    durationLabel: "7 Noites / 8 Dias",
+    sourceType: "MANUAL_CMS",
+    partnerName: "Maldives Royal Atoll Collection",
+    partnerConfirmationCode: "PARTNER-CNF-7788",
+    travelerFullName: "Rafael Rodrigues",
+    travelerEmail: "rafael@aguiafly.com",
+    travelerPhone: "+351912345678",
+    guestsCount: 2,
+    paymentMode: "DEPOSIT_SIGNAL",
+    totalPackageGrossEur: 4214.0,
+    amountChargedNowEur: 1053.5,
+    remainingBalanceEur: 3160.5,
+    aguiaflyCommissionEur: 514.0,
+    stripeChargeId: "ch_stripe_pkg_998877",
+    status: "DEPOSIT_PAID",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await assertSucceeds(
+    aliceDb.collection("package_bookings").doc("bkg_alice_1").set(bookingPayload)
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("package_bookings").where("userId", "==", ALICE_UID).get()
+  );
+
+  await assertFails(
+    bobDb.collection("package_bookings").doc("bkg_alice_1").get()
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("package_bookings").doc("bkg_alice_1").update({
+      status: "CONFIRMED",
+      amountChargedNowEur: 4214.0,
+      remainingBalanceEur: 0.0,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+});
+

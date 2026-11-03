@@ -1,52 +1,110 @@
-# Plano de Implementação — Melhorias de Layout, Radar Push Global, GPS em Ibiza e Carimbos Automáticos
+# Blindagem de Segurança e Qualidade — AguiaFly Royal Sapphire
 
-## 1. Visão Geral do Produto e Diagnóstico
+Elevação da postura de segurança cibernética, privacidade de dados pessoais (PII/PCI) e confiabilidade transacional do **AguiaFly** para padrão bancário e de companhia aérea internacional, protegendo o utilizador desde a pesquisa até a emissão do bilhete e guarda do passaporte digital.
 
-Com base no seu feedback e na captura de tela anexada, identificámos e estruturámos a solução para os quatro pontos relatados:
+## User Review & Critical Decisions
 
-1. **Correção do Layout e Escala dos Cartões de Voo (`SearchAndResultsScreen.kt`)**:
-   - **Causa do problema na captura de tela**: Os cartões de voo e a barra de pesquisa dividiam a largura horizontal entre demasiadas colunas simultâneas (companhia + avião + preço à direita, ou partida + duração + chegada + preço na mesma linha). Em ecrãs com escala de fonte aumentada ou largura compacta, o preço (`€470.80`) e os horários (`16:55`) ficavam espremidos e quebravam letra a letra verticalmente.
-   - **Solução**: Reestruturar os cartões de ofertas com **cabeçalho horizontal dedicado** (Companhia + Código do Voo à esquerda e Preço Total destacado em linha única com `maxLines = 1` e `softWrap = false` à direita) e **linha exclusiva de ponta a ponta para os horários** (`Partida ➔ Duração/Escalas ➔ Chegada`), garantindo leitura limpa, sem quebras de texto e com espaçamento compacto e organizado.
+> [!IMPORTANT]
+> As decisões abaixo refletem exatamente as escolhas confirmadas para a blindagem do aplicativo:
 
-2. **Aeroporto de Ibiza (`IBZ`) e Expansão do Catálogo de Geolocalização GPS (`NearestAirportLocator.kt` & `PlaceAutocompleteCatalog.kt`)**:
-   - **Causa do problema**: O motor de cálculo de distância GPS (fórmula de Haversine) continha apenas Madrid (`MAD`) e Barcelona (`BCN`) em Espanha. Estando em Ibiza (`38.8729° N, 1.3731° E`), o aeroporto registado mais próximo na lista era Barcelona (~280 km).
-   - **Solução**: Adicionar o **Aeroporto de Ibiza (`IBZ`)**, Palma de Maiorca (`PMI`), Menorca (`MAH`), Málaga (`AGP`), Valência (`VLC`), Alicante (`ALC`), Sevilha (`SVQ`), Bilbau (`BIO`), Tenerife (`TFS`) e outros hubs europeus tanto no `NearestAirportLocator` quanto no `PlaceAutocompleteCatalog`, além de refinar a leitura de GPS (`LocationManager`) para detetar `IBZ • Ibiza` imediatamente.
-
-3. **Radar Global Automático de Super Promoções Push (`PushNotificationHelper.kt`, `PromoAlertWorker.kt` & `FlightSearchViewModel.kt`)**:
-   - **Como funcionará**: Além dos alertas de rotas específicas, o sistema passará a contar com um **Radar Global Automático de Super Promoções** ativo por padrão.
-   - Ao abrir o aplicativo e também em segundo plano (via `WorkManager` periódico), o motor analisa tarifas promocionais partindo do aeroporto mais próximo do utilizador (ex.: `IBZ`, `BCN`, `LIS`, `GRU`) para diferentes países (Espanha, Portugal, França, Itália, Reino Unido, Brasil, Suíça, Países Baixos, Emirados Árabes Unidos, EUA) e dispara notificações Push automáticas sempre que detetar uma queda acentuada ou tarifa relâmpago (ex.: descontos de 25% a 45% abaixo da média), permitindo abrir o aplicativo diretamente na oferta.
-
-4. **Carimbos de Passaporte 100% Automáticos na Compra do Bilhete com até 15 Fotos (`ProfilePassportScreen.kt`, `ProfilePassportModels.kt` & `PassportVisaPageComponent.kt`)**:
-   - **Remoção de carimbos manuais**: O botão e diálogo de criação manual de carimbos (`AddPastTripStampDialog`) serão removidos para garantir autenticidade — nenhum utilizador poderá fabricar carimbos sem ter adquirido o bilhete no aplicativo.
-   - **Geração automática imediata**: Assim que o utilizador concluir a compra/emissão de um bilhete (`issuedTickets`), o carimbo oficial daquele país/destino é gerado automaticamente no Passaporte do Perfil com o código PNR, número do voo, cidade e bandeira.
-   - **Galeria de até 15 fotos por carimbo**: Cada carimbo emitido automaticamente terá um seletor e galeria interativa que permite anexar, visualizar em carrossel/grelha e gerir **até 15 fotos reais da viagem** (`PickMultipleVisualMedia(15)`), com indicador de contagem (`X/15 fotos`) e opção de adicionar mais fotos ou remover fotos individuais.
+- **Decisão Confirmada 1 — Privacidade de Ecrã e Mascaramento de Passaporte**: Ativação automática de `FLAG_SECURE` na tela de Checkout (impedindo prints, gravações de tela ou espelhamento enquanto dados de cartão e passaporte estão abertos) e mascaramento visual do número de passaporte (`•••••789A`) com botão de revelação temporária sob toque.
+- **Decisão Confirmada 2 — Segurança Transacional no Checkout (Luhn, Validade e Idempotência)**: Validação matemática real do número do cartão pelo **Algoritmo de Luhn**, verificação da data de validade do cartão e validade mínima internacional do passaporte, além de chave criptográfica de idempotência (`Idempotency-Key`) por transação para impedir cobranças duplicadas no Stripe ou emissões duplicadas na Duffel em caso de oscilação de rede.
+- **Decisão Confirmada 3 — Blindagem de Rede HTTPS/TLS, Cache Criptografado e Auditoria Visual no Perfil**: Configuração estrita de rede (`cleartextTrafficPermitted="false"` aceitando exclusivamente HTTPS TLS 1.2/1.3 para Duffel, Stripe e Firebase), exclusão de caches sensíveis de backups ADB/nuvem não protegidos, criptografia AES-256-GCM (via Android Keystore) para dados sensíveis em cache local e um **Selo + Painel de Auditoria de Segurança Royal Sapphire** na aba Perfil.
 
 ---
 
-## 2. Arquitetura e Ficheiros a Modificar
+## 1. Overview & Core Concept
 
-- **`app/src/main/java/com/example/domain/location/NearestAirportLocator.kt`**:
-  - Inclusão das coordenadas exatas do Aeroporto de Ibiza (`IBZ` — `38.8729, 1.3731`) e demais aeroportos das Ilhas Baleares, Espanha, Europa e América do Sul.
-- **`app/src/main/java/com/example/data/model/PlaceAutocompleteCatalog.kt`**:
-  - Sincronização do catálogo de pesquisa e resolução IATA com `IBZ` (Ibiza) e novos destinos internacionais.
-- **`app/src/main/java/com/example/notifications/PushNotificationHelper.kt` & `PromoAlertWorker.kt`**:
-  - Novo motor `GlobalSuperPromoRadar` que seleciona e valida super promoções internacionais para múltiplos países a partir da origem local do utilizador e envia notificações Push automáticas ao iniciar a sessão e em segundo plano.
-- **`app/src/main/java/com/example/ui/screens/SearchAndResultsScreen.kt`**:
-  - Redesenho responsivo do `FlightOfferCard`, dos chips de filtro e dos cartões do Radar de Promoções:
-    - Textos de preço, horários e códigos IATA com `softWrap = false` e `maxLines = 1`.
-    - Separação clara entre linha de cabeçalho (Companhia + Preço) e linha de horários (Partida ➔ Duração ➔ Chegada).
-    - Redução de espaçamentos excessivos e tamanhos de fonte exagerados para caber perfeitamente em qualquer densidade de ecrã.
-- **`app/src/main/java/com/example/data/model/ProfilePassportModels.kt` & `app/src/main/java/com/example/ui/screens/ProfilePassportScreen.kt`**:
-  - Remoção da criação manual de carimbos (`manualStamps` deixam de ser criados manualmente; foco exclusivo nos carimbos gerados pelos `issuedTickets`).
-  - Atualização do limite de fotos por carimbo de bilhete emitido para **15 fotos** (`MAX_PHOTOS_PER_STAMP = 15`), permitindo adicionar fotos em múltiplos lotes até completar 15 imagens ou remover fotos individualmente.
-- **`app/src/main/java/com/example/ui/components/PassportVisaPageComponent.kt`**:
-  - Atualização dos cartões visuais de carimbo do passaporte e da linha do tempo para suportar a galeria de até 15 fotos por carimbo emitido.
+- **O que entrega**: Uma camada completa de proteção em profundidade (*Defense-in-Depth*) cobrindo rede, armazenamento local, privacidade visual contra malware/captura de tela e integridade financeira no momento da compra da passagem aérea.
+- **Público-Alvo**: Viajantes internacionais que inserem documentos reais de viagem (passaporte, data de nascimento, programas de milhagem) e realizam pagamentos de passagens aéreas em tempo real.
+- **Valor Principal**: Elimina riscos de cobrança duplicada, impede vazamento de documentos por captura de tela ou extração de backup local e oferece transparência total ao utilizador através de um diagnóstico visual de segurança em tempo real.
 
 ---
 
-## 3. Critérios de Verificação
+## 2. User Experience & Visual Design
 
-1. **Verificação Visual dos Cartões**: Nenhum horário (`16:55`, `18:10`) ou preço (`€470.80`) pode quebrar em duas ou três linhas; todos os cartões devem apresentar leitura imediata e limpa.
-2. **Verificação de GPS em Ibiza**: Coordenadas na região de Ibiza (`38.87° N, 1.37° E`) resolvem diretamente para `IBZ - Ibiza (Aeroporto de Ibiza)`.
-3. **Verificação do Radar Push Automático**: Ao abrir o app (com permissão de notificação ativa) e via tarefa periódica em segundo plano, o sistema deteta e notifica super promoções para diferentes países sem exigir configuração manual prévia.
-4. **Verificação de Carimbos Automáticos e 15 Fotos**: O passaporte exibe apenas carimbos provenientes de bilhetes emitidos na plataforma e permite anexar e gerir até 15 fotografias em cada carimbo.
+- **Fluxos de Segurança na Experiência do Utilizador**:
+  1. **Checkout Protegido (`FLAG_SECURE` + Validador Inteligente)**:
+     - Assim que o utilizador entra no Checkout, a janela Android ativa proteção `FLAG_SECURE` (exibindo o selo *"Sessão Blindada PCI-DSS • Captura de Tela Bloqueada"* no topo). Ao sair do Checkout, a permissão normal de captura de tela é restaurada automaticamente.
+     - O campo de passaporte permite alternar entre visualização mascarada (`••••••482`) e visível, e exibe feedback imediato caso o passaporte esteja vencido ou próximo de expirar (alerta de regra internacional de 6 meses).
+     - O formulário de cartão valida em tempo real a bandeira (Visa, Mastercard, Amex), o dígito verificador matemático via **Algoritmo de Luhn** e se o mês/ano de expiração é válido antes de liberar o botão de pagamento.
+  2. **Proteção Anti-Duplicidade (Idempotência Transacional)**:
+     - Ao tocar em pagar, o motor gera uma assinatura única determinística para a reserva (`SHA-256` da oferta + passageiro + janela temporal) enviada ao Stripe e controlada localmente para bloquear submissões concorrentes ou repetidas.
+  3. **Painel de Auditoria de Segurança no Perfil Passaporte**:
+     - Na tela **Perfil & Passaporte**, um cartão compacto **"Blindagem AguiaFly Security Shield (6/6 Ativos)"** mostra o estado verificado em tempo real:
+       - Firestore Zero-Trust Rules & Isolamento `UID`
+       - Firebase App Check Attestation
+       - Conexão Exclusiva HTTPS/TLS 1.3 (`api.duffel.com` & `api.stripe.com`)
+       - Cofre Local Criptografado (Android Keystore AES-256)
+       - Proteção Anti-Print `FLAG_SECURE` no Checkout
+       - Motor Anti-Duplicidade & Validação Luhn PCI
+
+- **Identidade Visual & Tema**:
+  - *Estética*: **Royal Sapphire & Champagne Gold** com indicadores de segurança em **Verde Esmeralda (`#10B981`)** e alertas preventivos em **Âmbar Imperial (`#F59E0B`)**.
+  - *Hierarquia Visual*: Badges de segurança com ícone de escudo verificado, tipografia monoespaçada para números mascarados de passaporte/cartão e cartões translúcidos em camadas.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decisão 1: `FLAG_SECURE` Dinâmico Apenas no Checkout + Mascaramento no Perfil**
+  - *Abordagem Escolhida*: Ativar `WindowManager.LayoutParams.FLAG_SECURE` dinamicamente via ciclo de vida Compose (`DisposableEffect`) durante o Checkout e mascarar o número do passaporte no Perfil/Cofre (`•••••1234`).
+  - *Porquê*: Protege o momento crítico em que o número completo do cartão, CVV e passaporte estão na tela contra malwares de captura, mas continua permitindo que o utilizador tire print dos seus carimbos de viagem ou de promoções na tela inicial.
+  - *Alternativas Consideradas*: Bloquear print no app inteiro impediria o utilizador de compartilhar promoções ou o seu passaporte de carimbos com amigos.
+
+- **Decisão 2: Criptografia Hardware-Backed (Android Keystore AES-256-GCM) + Regras de Backup Estritas**
+  - *Abordagem Escolhida*: Criptografar os dados do Cofre do Viajante armazenados no cache local usando chave simétrica `AES/GCM/NoPadding` guardada no `AndroidKeyStore` do aparelho, além de configurar `backup_rules.xml` e `data_extraction_rules.xml` para excluir caches sensíveis de extrações externas.
+  - *Porquê*: Mesmo em aparelhos perdidos ou submetidos a extração via cabo USB/ADB, o número do passaporte e dados pessoais nunca ficam em texto puro no disco local, enquanto a recuperação legítima ao reinstalar o app continua funcionando via Firestore autenticado com Google Sign-In.
+
+- **Decisão 3: Validação Matemática de Luhn + Chave de Idempotência no Pagamento**
+  - *Abordagem Escolhida*: Validar o cartão localmente com o Algoritmo de Luhn e anexar cabeçalho e trava de idempotência na requisição Stripe/Duffel.
+  - *Porquê*: Evita chamadas desnecessárias à API com números de cartão digitados incorretamente e garante que uma falha momentânea de 4G/Wi-Fi jamais gere duas cobranças para o mesmo bilhete.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+### Diagrama de Arquitetura de Segurança em Camadas
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                        AGUIAFLY SECURITY SHIELD (UI)                       │
+│  ┌──────────────────────────────┐      ┌────────────────────────────────┐  │
+│  │   CheckoutScreen Blindado    │      │  Perfil & Passaporte Digital   │  │
+│  │ • Window FLAG_SECURE Ativo   │      │ • Passaporte Mascarado ••••89A │  │
+│  │ • Validador Luhn & Expiração │      │ • Painel Auditoria 6/6 Checks  │  │
+│  │ • Alerta Validade Passaporte │      │ • Sincronização Cloud Segura   │  │
+│  └──────────────┬───────────────┘      └───────────────┬────────────────┘  │
+└─────────────────┼──────────────────────────────────────┼───────────────────┘
+                  │                                      │
+                  ▼                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                   CAMADA DE CRIPTOGRAFIA & VALIDAÇÃO                       │
+│  ┌──────────────────────────────┐      ┌────────────────────────────────┐  │
+│  │  CheckoutSecurityValidator   │      │   KeystoreVaultCipher (AES)    │  │
+│  │ • Algoritmo Luhn (Mod 10)    │      │ • AndroidKeyStore AES-256-GCM  │  │
+│  │ • Detector de Bandeira       │      │ • Cifra/Decifra PII no Cache   │  │
+│  │ • Guardião de Idempotência   │      │ • Zero Texto Puro em Disco     │  │
+│  └──────────────┬───────────────┘      └───────────────┬────────────────┘  │
+└─────────────────┼──────────────────────────────────────┼───────────────────┘
+                  │                                      │
+                  ▼                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                 CAMADA DE REDE & PERSISTÊNCIA ZERO-TRUST                   │
+│  ┌──────────────────────────────┐      ┌────────────────────────────────┐  │
+│  │ Network Security Config XML  │      │ Firestore Enterprise + Rules   │  │
+│  │ • cleartextPermitted = false │      │ • Google Sign-In + App Check   │  │
+│  │ • HTTPS TLS 1.2/1.3 Estrito  │      │ • Isolamento request.auth.uid  │  │
+│  │ • Headers Sanitizados        │      │ • Regras Backup Anti-Extração  │  │
+│  └──────────────────────────────┘      └────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Mapeamento Interativo de Componentes e Estados
+- **Ativador `FLAG_SECURE` no Checkout**: Quando o utilizador navega para a tela de Checkout, o componente aplica `FLAG_SECURE` na `Window` da Activity e exibe um badge de confirmação no topo; ao navegar de volta ou concluir a compra, o `onDispose` remove a flag imediatamente.
+- **Validador de Cartão (Luhn + Data) e Passaporte**: À medida que o utilizador digita no Checkout, o validador verifica:
+  1. Número do cartão entre 13 e 19 dígitos aprovando na soma de verificação de **Luhn (Módulo 10)**.
+  2. Mês (`01..12`) e ano de expiração não vencidos em relação à data atual.
+  3. Data de expiração do passaporte (alertando visualmente se estiver vencido ou com menos de 6 meses de validade).
+- **Cifra AES-256-GCM para Cache Offline**: Antes de salvar qualquer dado do Cofre de Viajante em `SharedPreferences`, o texto é cifrado com chave gerada dentro do `AndroidKeyStore` (`AES/GCM/NoPadding` com IV aleatório de 12 bytes) e decifrado de forma transparente na leitura.
+- **Guardião de Idempotência no Pagamento**: Gera um identificador único para a tentativa de compra atual e bloqueia reenvios duplicados para a mesma oferta/passageiro enquanto a transação está em processamento ou recém-concluída.

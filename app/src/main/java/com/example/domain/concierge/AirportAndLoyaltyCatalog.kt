@@ -3,11 +3,14 @@ package com.example.domain.concierge
 import com.example.data.model.AirlineBrandIdentity
 import com.example.data.model.AirportConciergeGuide
 import com.example.data.model.DailyFareSlot
+import com.example.data.model.MarkupConfig
+import com.example.domain.pricing.MarkupEngine
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.round
+import kotlin.math.roundToInt
 
 object AirportAndLoyaltyCatalog {
 
@@ -22,38 +25,153 @@ object AirportAndLoyaltyCatalog {
         7 to "Dom"
     )
 
-    fun generateFareCalendarStrip(
-        selectedDateIso: String,
-        baseLowestEur: Double,
-        totalDays: Int = 14
-    ): List<DailyFareSlot> {
-        val centerDate = runCatching { LocalDate.parse(selectedDateIso.trim()) }
-            .getOrDefault(LocalDate.of(2026, 11, 15))
-        val startDate = centerDate.minusDays(3)
-        val anchorFare = baseLowestEur.coerceAtLeast(120.0)
+    /**
+     * Retorna a tarifa base neta (Economy) de referência para qualquer par de aeroportos,
+     * garantindo consistência 100% exata entre o Calendário de Tarifas (+/- 3 dias e Mês) e a lista de voos.
+     */
+    fun resolveRouteBaseNetEcoEur(originIata: String, destinationIata: String): Double {
+        val orig = originIata.trim().uppercase()
+        val dest = destinationIata.trim().uppercase()
+        if (orig == dest) return 48.0
+        val pair = setOf(orig, dest)
+        return when {
+            pair == setOf("IBZ", "BCN") || pair == setOf("IBZ", "PMI") || pair == setOf("IBZ", "VLC") -> 29.0
+            pair == setOf("IBZ", "MAD") || pair == setOf("LIS", "MAD") || pair == setOf("OPO", "MAD") -> 36.0
+            pair == setOf("LIS", "OPO") || pair == setOf("BCN", "MAD") -> 34.0
+            orig in listOf("GRU", "GIG", "VCP", "CGH", "BSB", "CNF", "SSA", "REC", "FOR") ||
+                dest in listOf("GRU", "GIG", "VCP", "CGH", "BSB", "CNF", "SSA", "REC", "FOR") ||
+                orig in listOf("JFK", "MIA", "MCO", "LAX", "DXB") ||
+                dest in listOf("JFK", "MIA", "MCO", "LAX", "DXB") -> 310.0
+            else -> 48.0
+        }
+    }
 
-        return (0 until totalDays).map { offset ->
-            val date = startDate.plusDays(offset.toLong())
+    fun cabinClassMultiplier(cabinClass: String): Double {
+        return when (cabinClass.lowercase()) {
+            "first" -> 3.0
+            "business" -> 1.95
+            "premium_economy" -> 1.35
+            else -> 1.0
+        }
+    }
+
+    /**
+     * Multiplicador determinístico de tarifa por data (Dia da Semana + Sazonalidade da Rota).
+     * Usado tanto na busca de voos quanto no Calendário Flexível (+/- 3 dias e Menor Preço do Mês)
+     * para que ao clicar num dia do calendário os voos exibam exatamente o mesmo valor anunciado.
+     */
+    fun calculateDateFareMultiplier(
+        originIata: String,
+        destinationIata: String,
+        dateIso: String
+    ): Double {
+        val date = runCatching { LocalDate.parse(dateIso.trim().take(10)) }
+            .getOrDefault(LocalDate.of(2026, 11, 15))
+        val dow = date.dayOfWeek.value
+        val routeHash = abs((originIata.uppercase() + destinationIata.uppercase()).hashCode())
+        // Define qual terça ou quarta do mês tem a "Super Melhor Tarifa do Mês" para esta rota
+        val bestDayOfMonthTarget = ((routeHash % 24) + 3)
+
+        val dowFactor = when (dow) {
+            2 -> 0.82 // Terça-feira: dia clássico mais barato na aviação
+            3 -> 0.85 // Quarta-feira: tarifas promocionais NDC
+            4 -> 0.92 // Quinta-feira
+            6 -> 0.95 // Sábado
+            1 -> 1.00 // Segunda-feira: tarifa padrão
+            5 -> 1.14 // Sexta-feira: alta procura fim de semana
+            7 -> 1.18 // Domingo: retorno de fim de semana
+            else -> 1.00
+        }
+
+        val dayDelta = abs(date.dayOfMonth - bestDayOfMonthTarget)
+        val monthSpecialFactor = when {
+            dayDelta == 0 -> -0.08 // Dia mais barato absoluto do mês ("Melhor Tarifa")
+            dayDelta <= 2 -> -0.04
+            (date.dayOfMonth + routeHash) % 7 == 0 -> 0.05
+            else -> ((date.dayOfMonth % 5) - 2) * 0.015
+        }
+
+        return (dowFactor + monthSpecialFactor).coerceIn(0.74, 1.30)
+    }
+
+    /**
+     * Gera o Calendário de Tarifas Flexíveis (+/- 3 dias = 7 dias da semana ou 30 dias do mês)
+     * destacando automaticamente com a badge "Melhor Tarifa" (`isLowestOfPeriod = true`) o dia mais barato.
+     */
+    fun generateRouteFareCalendar(
+        originIata: String,
+        destinationIata: String,
+        anchorDateIso: String,
+        cabinClass: String = "economy",
+        tripMultiplier: Double = 1.0,
+        passengerMultiplier: Double = 1.0,
+        markupConfig: MarkupConfig = MarkupConfig(),
+        flexibleModePlusMinus3Days: Boolean = true,
+        totalDaysInMonthMode: Int = 30
+    ): List<DailyFareSlot> {
+        val centerDate = runCatching { LocalDate.parse(anchorDateIso.trim().take(10)) }
+            .getOrDefault(LocalDate.of(2026, 11, 15))
+
+        val dates: List<LocalDate> = if (flexibleModePlusMinus3Days) {
+            // Parâmetro oficial de datas flexíveis: +/- 3 dias em torno da data base (7 dias da semana)
+            (-3L..3L).map { offset -> centerDate.plusDays(offset) }
+        } else {
+            // Visão "Menor Preço do Mês": 30 dias completos a partir de -3 dias da data base
+            val start = centerDate.minusDays(3)
+            (0L until totalDaysInMonthMode.toLong()).map { offset -> start.plusDays(offset) }
+        }
+
+        val baseRouteEcoNet = resolveRouteBaseNetEcoEur(originIata, destinationIata)
+        val cabinMult = cabinClassMultiplier(cabinClass)
+        val paxTripFactor = (tripMultiplier * passengerMultiplier).coerceAtLeast(1.0)
+
+        val rawSlots = dates.map { date ->
+            val iso = date.toString()
             val dow = date.dayOfWeek.value
-            val dayFactor = when (dow) {
-                2, 3 -> 0.88 // Terça e Quarta com tarifas promocionais NDC
-                4 -> 0.93
-                5, 7 -> 1.12 // Sexta e Domingo alta procura
-                6 -> 0.96
-                else -> 1.0
+            val dateMult = calculateDateFareMultiplier(originIata, destinationIata, iso)
+            val singlePaxNet = round(baseRouteEcoNet * cabinMult * dateMult * 100.0) / 100.0
+            val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
+            val breakdown = MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig)
+
+            Triple(date, dow, breakdown.displayFareBeforeAncillariesEur)
+        }
+
+        val minFareInPeriod = rawSlots.minOfOrNull { it.third } ?: 0.0
+        val maxFareInPeriod = rawSlots.maxOfOrNull { it.third } ?: minFareInPeriod
+
+        return rawSlots.map { (date, dow, displayEur) ->
+            val isAbsoluteLowest = abs(displayEur - minFareInPeriod) < 0.02
+            val isPromo = isAbsoluteLowest || displayEur <= (minFareInPeriod * 1.08)
+            val savingsPct = if (maxFareInPeriod > displayEur && maxFareInPeriod > 0.0) {
+                (((maxFareInPeriod - displayEur) / maxFareInPeriod) * 100.0).roundToInt().coerceIn(5, 45)
+            } else {
+                0
             }
-            val variation = ((date.dayOfMonth % 5) - 2) * 0.025
-            val computedFare = round(anchorFare * (dayFactor + variation) * 100.0) / 100.0
-            val isPromo = (dow == 2 || dow == 3 || computedFare <= anchorFare * 0.91)
 
             DailyFareSlot(
                 isoDate = date.toString(),
                 dayOfWeekShort = dayOfWeekNames[dow] ?: "Dia",
                 dayMonthFormatted = date.format(shortMonthFormatter).replace(".", ""),
-                estimatedMinEur = computedFare,
-                isPromoDay = isPromo
+                estimatedMinEur = displayEur,
+                isPromoDay = isPromo,
+                isLowestOfPeriod = isAbsoluteLowest,
+                savingsPercent = savingsPct
             )
         }
+    }
+
+    fun generateFareCalendarStrip(
+        selectedDateIso: String,
+        baseLowestEur: Double,
+        totalDays: Int = 7
+    ): List<DailyFareSlot> {
+        return generateRouteFareCalendar(
+            originIata = "LIS",
+            destinationIata = "CDG",
+            anchorDateIso = selectedDateIso,
+            flexibleModePlusMinus3Days = (totalDays <= 7),
+            totalDaysInMonthMode = totalDays
+        )
     }
 
     fun resolveAirlineIdentity(

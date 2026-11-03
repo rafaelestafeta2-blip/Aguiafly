@@ -1,13 +1,16 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.AirportPlaceSuggestion
 import com.example.data.model.BodyType
+import com.example.data.model.CloudPassportVisualProfile
 import com.example.data.model.EnrichedFlightOffer
 import com.example.data.model.FrequentFlyerSelection
 import com.example.data.model.IssuedTicket
+import com.example.data.model.LocalProfileVisualState
 import com.example.data.model.MarkupConfig
 import com.example.data.model.OrderCancellationConfirmation
 import com.example.data.model.OrderCancellationQuote
@@ -17,6 +20,7 @@ import com.example.data.model.PaymentCardInput
 import com.example.data.model.PlaceAutocompleteCatalog
 import com.example.data.model.PlanespottersPhoto
 import com.example.data.model.PriceAlertSubscription
+import com.example.data.model.ProfilePassportStorage
 import com.example.data.model.SavedTravelerProfile
 import com.example.data.model.SelectedAncillaries
 import com.example.data.model.TravelPromotionDeal
@@ -31,6 +35,7 @@ import com.example.domain.pricing.DisplayCurrency
 import com.example.domain.pricing.MarkupEngine
 import kotlin.math.round
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -39,9 +44,11 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class FlightFilterOption(val label: String) {
     ALL("Todos"),
+    LOWEST_OF_MONTH("★ Menor Preço do Mês"),
     DIRECT_ONLY("Voos Diretos"),
     WITH_STOPS("Com Escalas"),
     LOWEST_PRICE("Menor Tarifa €"),
@@ -78,7 +85,7 @@ class FlightBookingViewModel(
     private val _frequentFlyerSelection = MutableStateFlow(FrequentFlyerSelection())
     val frequentFlyerSelection: StateFlow<FrequentFlyerSelection> = _frequentFlyerSelection.asStateFlow()
 
-    private val _cabinClass = MutableStateFlow("business")
+    private val _cabinClass = MutableStateFlow("economy")
     val cabinClass: StateFlow<String> = _cabinClass.asStateFlow()
 
     private val _activeFilter = MutableStateFlow(FlightFilterOption.ALL)
@@ -179,6 +186,18 @@ class FlightBookingViewModel(
             initialValue = null
         )
 
+    val cloudPassportVisualProfile: StateFlow<CloudPassportVisualProfile?> =
+        travelerProfileRepository.observePassportVisualProfile(currentUserId)
+            .catch { e ->
+                Log.w("FlightBookingVM", "Error observing passport visual profile", e)
+                emit(null)
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000L),
+                initialValue = null
+            )
+
     val displayedOffers: StateFlow<List<EnrichedFlightOffer>> = combine(
         _rawOffers,
         markupConfig,
@@ -193,13 +212,15 @@ class FlightBookingViewModel(
                 netFareEur = adjustedNet,
                 pricing = MarkupEngine.calculateBreakdown(adjustedNet, config)
             )
-        }
+        }.sortedBy { it.pricing.displayFareBeforeAncillariesEur }
+
         when (filter) {
             FlightFilterOption.ALL -> repriced
+            FlightFilterOption.LOWEST_OF_MONTH -> repriced
             FlightFilterOption.DIRECT_ONLY -> repriced.filter { it.isDirectFlight }
             FlightFilterOption.WITH_STOPS -> repriced.filter { !it.isDirectFlight }
             FlightFilterOption.WIDEBODY_ONLY -> repriced.filter { it.aircraftSpec.bodyType == BodyType.WIDEBODY }
-            FlightFilterOption.LOWEST_PRICE -> repriced.sortedBy { it.pricing.displayFareBeforeAncillariesEur }
+            FlightFilterOption.LOWEST_PRICE -> repriced
             FlightFilterOption.FASTEST -> repriced.sortedBy { it.durationMinutes }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
@@ -242,6 +263,24 @@ class FlightBookingViewModel(
         }
     }
 
+    fun syncPassportVisualStateToCloud(context: Context, state: LocalProfileVisualState) {
+        viewModelScope.launch {
+            try {
+                val appCtx = context.applicationContext
+                val payload = withContext(Dispatchers.IO) {
+                    ProfilePassportStorage.buildCloudVisualProfilePayload(
+                        context = appCtx,
+                        userId = currentUserId,
+                        state = state
+                    )
+                }
+                travelerProfileRepository.savePassportVisualProfile(payload)
+            } catch (e: Exception) {
+                Log.w("FlightBookingVM", "Failed to sync passport visual state to Firestore", e)
+            }
+        }
+    }
+
     fun deleteTravelerProfileFromVault() {
         viewModelScope.launch {
             val res = travelerProfileRepository.deleteTravelerProfile()
@@ -278,12 +317,17 @@ class FlightBookingViewModel(
 
     fun updateSearchParams(origin: String, destination: String, date: String, cabin: String) {
         val previousOrigin = _originIata.value
+        val previousDate = _departureDate.value
         _originIata.value = origin.uppercase()
         _destinationIata.value = destination.uppercase()
         _departureDate.value = date
         _cabinClass.value = cabin
         if (previousOrigin != _originIata.value) {
             refreshPromotionalDeals()
+        }
+        if (previousDate != date) {
+            val formattedDate = com.example.data.model.CountryPassportCatalog.formatStampDate(date)
+            _statusBanner.value = "📅 Data selecionada: $formattedDate (${_originIata.value} ➔ ${_destinationIata.value}) • Tarifas atualizadas!"
         }
     }
 
@@ -309,6 +353,28 @@ class FlightBookingViewModel(
 
     fun setFilter(filter: FlightFilterOption) {
         _activeFilter.value = filter
+        if (filter == FlightFilterOption.LOWEST_OF_MONTH) {
+            val monthlySlots = com.example.domain.concierge.AirportAndLoyaltyCatalog.generateRouteFareCalendar(
+                originIata = _originIata.value,
+                destinationIata = _destinationIata.value,
+                anchorDateIso = _departureDate.value,
+                cabinClass = _cabinClass.value,
+                tripMultiplier = _tripType.value.multiplier,
+                passengerMultiplier = _passengerComposition.value.fareMultiplier,
+                markupConfig = markupConfig.value,
+                flexibleModePlusMinus3Days = false,
+                totalDaysInMonthMode = 30
+            )
+            val cheapestDay = monthlySlots.firstOrNull { it.isLowestOfPeriod }
+                ?: monthlySlots.minByOrNull { it.estimatedMinEur }
+            if (cheapestDay != null) {
+                _departureDate.value = cheapestDay.isoDate
+                executeSearch()
+                val formattedPrice = _selectedCurrency.value.format(cheapestDay.estimatedMinEur)
+                _statusBanner.value =
+                    "★ Menor Preço do Mês selecionado: ${cheapestDay.dayOfWeekShort}, ${cheapestDay.dayMonthFormatted} por $formattedPrice!"
+            }
+        }
     }
 
     fun executeSearch() {
@@ -408,6 +474,7 @@ class FlightBookingViewModel(
                 val airline = bestOffer?.airlineName ?: "TAP Air Portugal NDC"
 
                 if (observedEur <= alert.targetMaxPriceEur) {
+                    val isNewDrop = !alert.promoTriggered || (observedEur < alert.lastObservedPriceEur - 1.0)
                     if (alert.id.isNotBlank()) {
                         priceAlertRepository.updateObservedPriceAndPromoState(
                             alertId = alert.id,
@@ -415,7 +482,9 @@ class FlightBookingViewModel(
                             promoTriggered = true
                         )
                     }
-                    onPromoFound(alert, observedEur, airline)
+                    if (isNewDrop) {
+                        onPromoFound(alert, observedEur, airline)
+                    }
                 }
             }
 
@@ -432,9 +501,22 @@ class FlightBookingViewModel(
         }
     }
 
+    private val _ticketEsimSelections = MutableStateFlow<Map<String, com.example.data.model.AiraloEsimPackage>>(emptyMap())
+    val ticketEsimSelections: StateFlow<Map<String, com.example.data.model.AiraloEsimPackage>> = _ticketEsimSelections.asStateFlow()
+
+    private val _ticketLoungeSelections = MutableStateFlow<Map<String, List<com.example.data.model.VipLoungeOffer>>>(emptyMap())
+    val ticketLoungeSelections: StateFlow<Map<String, List<com.example.data.model.VipLoungeOffer>>> = _ticketLoungeSelections.asStateFlow()
+
+    private val _ticketExperienceSelections = MutableStateFlow<Map<String, List<com.example.data.model.DestinationExperienceOffer>>>(emptyMap())
+    val ticketExperienceSelections: StateFlow<Map<String, List<com.example.data.model.DestinationExperienceOffer>>> = _ticketExperienceSelections.asStateFlow()
+
     fun selectOffer(offer: EnrichedFlightOffer, resetAncillaries: Boolean = false) {
         if (resetAncillaries) {
-            _selectedAncillaries.value = SelectedAncillaries()
+            // Preserva passes de Sala VIP já selecionados na tela de seleção de voos para a rota
+            val preservedLounges = _selectedAncillaries.value.selectedVipLounges
+            _selectedAncillaries.value = SelectedAncillaries(
+                selectedVipLounges = preservedLounges
+            )
         }
         val updatedPricing = MarkupEngine.calculateBreakdown(
             offer.netFareEur,
@@ -455,9 +537,19 @@ class FlightBookingViewModel(
         _destinationIata.value = deal.destinationIata
         _departureDate.value = deal.departureDateIso
         _cabinClass.value = "economy"
+        _tripType.value = TripType.ONE_WAY
+        _passengerComposition.value = PassengerComposition()
 
+        // Seleciona imediatamente a oferta com o valor EXATO exibido no carrossel ou na notificação Push
+        val exactPromoOffer = flightRepository.buildOfferFromDeal(deal, markupConfig.value)
+        selectOffer(exactPromoOffer, resetAncillaries = true)
+
+        val formattedPrice = _selectedCurrency.value.format(deal.displayTotalEur)
+        _statusBanner.value = "🔥 Promoção ${deal.originCity} ➔ ${deal.destinationCity} selecionada ($formattedPrice)!"
+        onNavigateToCheckout()
+
+        // Atualiza a lista da rota em segundo plano mantendo a oferta promocional no topo
         viewModelScope.launch {
-            _isSearching.value = true
             try {
                 val liveRouteOffers = flightRepository.searchFlights(
                     originIata = deal.originIata,
@@ -466,50 +558,45 @@ class FlightBookingViewModel(
                     cabinClass = "economy",
                     markupConfig = markupConfig.value
                 )
-                _rawOffers.value = liveRouteOffers
-
-                val cheapestLiveOffer = liveRouteOffers.minByOrNull { it.pricing.displayFareBeforeAncillariesEur }
-                if (cheapestLiveOffer != null) {
-                    selectOffer(cheapestLiveOffer, resetAncillaries = true)
-                } else {
-                    val spec = AircraftSpecsCatalog.resolveSpec("359", null)
-                    val resolvedOriginCity = PlaceAutocompleteCatalog.resolveByIata(deal.originIata).cityName
-                    val fallbackOffer = EnrichedFlightOffer(
-                        offerId = "off_${deal.id}",
-                        passengerId = "pas_promo_01",
-                        airlineName = deal.airlineName,
-                        airlineIata = deal.airlineIata,
-                        flightNumber = "${deal.airlineIata}880",
-                        originIata = deal.originIata,
-                        originCity = resolvedOriginCity,
-                        destinationIata = deal.destinationIata,
-                        destinationCity = deal.destinationCity,
-                        departureTimeFormatted = "09:30",
-                        arrivalTimeFormatted = "12:45",
-                        departureIso = "${deal.departureDateIso}T09:30:00Z",
-                        arrivalIso = "${deal.departureDateIso}T12:45:00Z",
-                        durationFormatted = "2h 45m",
-                        durationMinutes = 165,
-                        stopsCount = if (deal.isDirectFlight) 0 else 1,
-                        stopoverHubsSummary = if (deal.isDirectFlight) "" else "via MAD",
-                        totalConnectionMinutes = if (deal.isDirectFlight) 0 else 75,
-                        cabinClass = "economy",
-                        netFareEur = deal.netFareEur,
-                        pricing = MarkupEngine.calculateBreakdown(deal.netFareEur, markupConfig.value),
-                        aircraftSpec = spec,
-                        includedBaggageSummary = "1x 23kg Despachada + 1x Cabine (Tarifa Promocional)",
-                        cancellationPolicySummary = "Alteração Flexível • Tarifa Promocional NDC",
-                        isLiveDuffelOffer = false
-                    )
-                    selectOffer(fallbackOffer, resetAncillaries = true)
-                }
-
-                val formattedPrice = _selectedCurrency.value.format(deal.displayTotalEur)
-                _statusBanner.value = "🔥 Promoção ${deal.originCity} ➔ ${deal.destinationCity} selecionada ($formattedPrice)!"
-                onNavigateToCheckout()
-            } finally {
-                _isSearching.value = false
+                val merged = (listOf(exactPromoOffer) + liveRouteOffers.filter { it.offerId != exactPromoOffer.offerId })
+                _rawOffers.value = merged
+            } catch (_: Exception) {
+                _rawOffers.value = listOf(exactPromoOffer)
             }
+        }
+    }
+
+    /**
+     * Chamado quando o utilizador toca numa Notificação Push de promoção para abrir
+     * diretamente a página de compra (Checkout) com aquela promoção exata selecionada.
+     */
+    fun selectPromotionalDealFromPushIntent(
+        promoDealId: String?,
+        promoOrigin: String?,
+        promoDestination: String?,
+        onNavigateToCheckout: () -> Unit
+    ) {
+        val currentDeals = _promotionalDeals.value
+        val catalogDeals = com.example.data.model.PromotionalDealsCatalog.getFilteredDeals(
+            category = "Todas",
+            currentOrigin = promoOrigin?.ifBlank { _originIata.value } ?: _originIata.value
+        )
+        val allCandidates = currentDeals + catalogDeals
+
+        val matchedDeal = allCandidates.firstOrNull {
+            !promoDealId.isNullOrBlank() && it.id.equals(promoDealId, ignoreCase = true)
+        } ?: allCandidates.firstOrNull {
+            !promoDestination.isNullOrBlank() && it.destinationIata.equals(promoDestination, ignoreCase = true)
+        } ?: allCandidates.firstOrNull()
+
+        if (matchedDeal != null) {
+            val resolvedOrigin = promoOrigin?.takeIf { it.isNotBlank() } ?: matchedDeal.originIata
+            val resolvedOriginCity = PlaceAutocompleteCatalog.resolveByIata(resolvedOrigin).cityName
+            val finalDeal = matchedDeal.copy(
+                originIata = resolvedOrigin,
+                originCity = resolvedOriginCity
+            )
+            selectPromotionalDeal(finalDeal, onNavigateToCheckout)
         }
     }
 
@@ -529,6 +616,87 @@ class FlightBookingViewModel(
         _selectedAncillaries.value = _selectedAncillaries.value.copy(includePriorityLounge = enabled)
     }
 
+    fun selectAiraloEsimPackage(pkg: com.example.data.model.AiraloEsimPackage?) {
+        _selectedAncillaries.value = _selectedAncillaries.value.copy(selectedEsimPackage = pkg)
+        if (pkg != null) {
+            _statusBanner.value =
+                "📶 eSIM Airalo ${pkg.planTitle} adicionado (+${MarkupEngine.formatEur(pkg.retailPriceEur)} incl. comissão AguiaFly)"
+        }
+    }
+
+    fun toggleVipLoungePass(lounge: com.example.data.model.VipLoungeOffer) {
+        val current = _selectedAncillaries.value.selectedVipLounges
+        val exists = current.any { it.loungeId == lounge.loungeId }
+        val updated = if (exists) {
+            current.filterNot { it.loungeId == lounge.loungeId }
+        } else {
+            current + lounge
+        }
+        _selectedAncillaries.value = _selectedAncillaries.value.copy(selectedVipLounges = updated)
+        if (!exists) {
+            _statusBanner.value =
+                "🥂 Passe Sala VIP ${lounge.airportIata} (${lounge.loungeName}) adicionado (+${MarkupEngine.formatEur(lounge.retailPassPriceEur)})"
+        }
+    }
+
+    fun toggleDestinationExperience(experience: com.example.data.model.DestinationExperienceOffer) {
+        val current = _selectedAncillaries.value.selectedExperiences
+        val exists = current.any { it.experienceId == experience.experienceId }
+        val updated = if (exists) {
+            current.filterNot { it.experienceId == experience.experienceId }
+        } else {
+            current + experience
+        }
+        _selectedAncillaries.value = _selectedAncillaries.value.copy(selectedExperiences = updated)
+        if (!exists) {
+            _statusBanner.value =
+                "🎟️ ${experience.title} adicionado ao Checkout (+${MarkupEngine.formatEur(experience.retailPriceEur)})"
+        }
+    }
+
+    fun selectTicketPostBookingEsim(ticket: IssuedTicket, pkg: com.example.data.model.AiraloEsimPackage?) {
+        val key = ticket.bookingReference.ifBlank { ticket.id }
+        if (pkg == null) {
+            _ticketEsimSelections.value = _ticketEsimSelections.value - key
+        } else {
+            _ticketEsimSelections.value = _ticketEsimSelections.value + (key to pkg)
+            _statusBanner.value =
+                "📶 eSIM Airalo ${pkg.planTitle} ativado para a reserva $key (${MarkupEngine.formatEur(pkg.retailPriceEur)})!"
+        }
+    }
+
+    fun toggleTicketPostBookingLounge(ticket: IssuedTicket, lounge: com.example.data.model.VipLoungeOffer) {
+        val key = ticket.bookingReference.ifBlank { ticket.id }
+        val current = _ticketLoungeSelections.value[key].orEmpty()
+        val exists = current.any { it.loungeId == lounge.loungeId }
+        val updated = if (exists) {
+            current.filterNot { it.loungeId == lounge.loungeId }
+        } else {
+            current + lounge
+        }
+        _ticketLoungeSelections.value = _ticketLoungeSelections.value + (key to updated)
+        if (!exists) {
+            _statusBanner.value =
+                "🥂 Passe Sala VIP ${lounge.loungeName} (${lounge.airportIata}) emitido para a reserva $key!"
+        }
+    }
+
+    fun toggleTicketPostBookingExperience(ticket: IssuedTicket, experience: com.example.data.model.DestinationExperienceOffer) {
+        val key = ticket.bookingReference.ifBlank { ticket.id }
+        val current = _ticketExperienceSelections.value[key].orEmpty()
+        val exists = current.any { it.experienceId == experience.experienceId }
+        val updated = if (exists) {
+            current.filterNot { it.experienceId == experience.experienceId }
+        } else {
+            current + experience
+        }
+        _ticketExperienceSelections.value = _ticketExperienceSelections.value + (key to updated)
+        if (!exists) {
+            _statusBanner.value =
+                "✨ Experiência '${experience.title}' confirmada em ${ticket.destinationCity} para a reserva $key!"
+        }
+    }
+
     fun completeStripeCheckoutAndIssueOrder(
         firstName: String,
         lastName: String,
@@ -542,6 +710,7 @@ class FlightBookingViewModel(
         onOrderIssued: (IssuedTicket) -> Unit
     ) {
         val offer = _selectedOffer.value ?: return
+        val activeAncillaries = _selectedAncillaries.value
         viewModelScope.launch {
             _isIssuingOrder.value = true
             try {
@@ -570,7 +739,7 @@ class FlightBookingViewModel(
 
                 val result = flightRepository.processCheckoutAndIssueOrder(
                     offer = offer,
-                    ancillaries = _selectedAncillaries.value,
+                    ancillaries = activeAncillaries,
                     markupConfig = markupConfig.value,
                     passengerFirstName = firstName,
                     passengerLastName = lastName,
@@ -584,6 +753,16 @@ class FlightBookingViewModel(
                     val saveRes = ticketRepository.createTicket(ticket)
                     val savedId = saveRes.getOrDefault(ticket.id)
                     val finalTicket = ticket.copy(id = savedId)
+                    val ticketKey = finalTicket.bookingReference.ifBlank { finalTicket.id }
+                    activeAncillaries.selectedEsimPackage?.let { esim ->
+                        _ticketEsimSelections.value = _ticketEsimSelections.value + (ticketKey to esim)
+                    }
+                    if (activeAncillaries.selectedVipLounges.isNotEmpty()) {
+                        _ticketLoungeSelections.value = _ticketLoungeSelections.value + (ticketKey to activeAncillaries.selectedVipLounges)
+                    }
+                    if (activeAncillaries.selectedExperiences.isNotEmpty()) {
+                        _ticketExperienceSelections.value = _ticketExperienceSelections.value + (ticketKey to activeAncillaries.selectedExperiences)
+                    }
                     val checkInMsg = if (documentInfo.autoCheckInEnabled) {
                         "Check-in Automático agendado!"
                     } else {

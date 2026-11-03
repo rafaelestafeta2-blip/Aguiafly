@@ -53,6 +53,8 @@ fun FlightOfferCard(
     offer: EnrichedFlightOffer,
     onSelectOffer: (EnrichedFlightOffer) -> Unit,
     onInspectAircraft: (EnrichedFlightOffer) -> Unit,
+    isBestFareOffer: Boolean = false,
+    selectedCurrency: com.example.domain.pricing.DisplayCurrency = com.example.domain.pricing.DisplayCurrency.EUR,
     modifier: Modifier = Modifier
 ) {
     val isWidebody = offer.aircraftSpec.bodyType == BodyType.WIDEBODY
@@ -61,6 +63,9 @@ fun FlightOfferCard(
     val champagneGold = MaterialTheme.colorScheme.primary
     val aeroCyan = MaterialTheme.colorScheme.secondary
     val badgeColor = if (isDirect) emerald else champagneGold
+    val formattedDateBadge = remember(offer.departureIso) {
+        com.example.data.model.CountryPassportCatalog.formatStampDate(offer.departureIso.take(10))
+    }
 
     val airlineIdentity = remember(offer.airlineIata, offer.cabinClass, isWidebody) {
         AirportAndLoyaltyCatalog.resolveAirlineIdentity(
@@ -76,13 +81,17 @@ fun FlightOfferCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .border(
-                width = 1.dp,
+                width = if (isBestFareOffer) 1.8.dp else 1.dp,
                 brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        champagneGold.copy(alpha = 0.75f),
-                        badgeColor.copy(alpha = 0.4f),
-                        champagneGold.copy(alpha = 0.65f)
-                    )
+                    colors = if (isBestFareOffer) {
+                        listOf(emerald, champagneGold, emerald)
+                    } else {
+                        listOf(
+                            champagneGold.copy(alpha = 0.75f),
+                            badgeColor.copy(alpha = 0.4f),
+                            champagneGold.copy(alpha = 0.65f)
+                        )
+                    }
                 ),
                 shape = RoundedCornerShape(20.dp)
             )
@@ -106,6 +115,43 @@ fun FlightOfferCard(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // 0. Faixa de Data do Voo + Destaque "★ MELHOR TARIFA" no voo mais barato
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = champagneGold.copy(alpha = 0.16f)
+                ) {
+                    Text(
+                        text = "📅 PARTIDA: $formattedDateBadge",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = champagneGold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
+
+                if (isBestFareOffer) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF10B981)
+                    ) {
+                        Text(
+                            text = "★ MELHOR TARIFA DISPONÍVEL",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF04130D),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
             // 1. Cabeçalho Horizontal: Companhia + Código à esquerda (weight 1f) e Preço Total à direita (sem quebra)
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -183,10 +229,10 @@ fun FlightOfferCard(
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = MarkupEngine.formatEur(offer.pricing.displayFareBeforeAncillariesEur),
+                        text = selectedCurrency.format(offer.pricing.displayFareBeforeAncillariesEur),
                         style = MaterialTheme.typography.titleLarge,
                         fontSize = 20.sp,
-                        color = champagneGold,
+                        color = if (isBestFareOffer) Color(0xFF10B981) else champagneGold,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
                         softWrap = false

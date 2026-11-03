@@ -110,7 +110,9 @@ fun SearchAndResultsScreen(
     detectedAirport: DetectedAirportResult? = null,
     selectedCurrency: DisplayCurrency = DisplayCurrency.EUR,
     onDetectNearestAirport: (DetectedAirportResult) -> Unit = {},
-    onSelectCurrency: (DisplayCurrency) -> Unit = {}
+    onSelectCurrency: (DisplayCurrency) -> Unit = {},
+    selectedVipLounges: List<com.example.data.model.VipLoungeOffer> = emptyList(),
+    onToggleVipLoungePass: (com.example.data.model.VipLoungeOffer) -> Unit = {}
 ) {
     val context = LocalContext.current
     var localOrigin by remember(originIata) { mutableStateOf(originIata) }
@@ -130,9 +132,6 @@ fun SearchAndResultsScreen(
         NearestAirportLocator.requestActiveGpsAirportUpdate(context) { result ->
             localOrigin = result.airport.iataCode
             onDetectNearestAirport(result)
-        }
-        if (isAutoGlobalRadarEnabled && PushNotificationHelper.hasNotificationPermission(context)) {
-            onTriggerPromoCronSweep()
         }
     }
 
@@ -171,14 +170,11 @@ fun SearchAndResultsScreen(
         }
     }
 
-    // Dispara automaticamente a varredura de promoções via API e Radar Global ao abrir o app
-    LaunchedEffect(localOrigin, isAutoGlobalRadarEnabled) {
+    // Agenda o radar inteligente em segundo plano sem disparar notificações duplicadas na abertura
+    LaunchedEffect(isAutoGlobalRadarEnabled) {
         if (!hasTriggeredStartupPromoRadar && isAutoGlobalRadarEnabled) {
             hasTriggeredStartupPromoRadar = true
             PushNotificationHelper.scheduleBackgroundGlobalPromoRadar(context)
-            if (PushNotificationHelper.hasNotificationPermission(context)) {
-                onTriggerPromoCronSweep()
-            }
         }
     }
 
@@ -372,6 +368,11 @@ fun SearchAndResultsScreen(
                         returnDateIso = returnDate,
                         tripType = tripType,
                         lowestCurrentFareEur = lowestCurrentFareEur,
+                        originIata = localOrigin,
+                        destinationIata = localDest,
+                        cabinClass = localCabin,
+                        passengers = passengers,
+                        selectedCurrency = selectedCurrency,
                         onSelectDepartureDate = { pickedDate ->
                             localDate = pickedDate
                             onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
@@ -392,6 +393,7 @@ fun SearchAndResultsScreen(
                                 onClick = {
                                     localCabin = code
                                     onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                                    onExecuteSearch()
                                 },
                                 label = { Text(label) },
                                 colors = FilterChipDefaults.filterChipColors(
@@ -479,6 +481,23 @@ fun SearchAndResultsScreen(
         }
 
         item {
+            val routeStopoverHubs = remember(offers) {
+                offers
+                    .map { it.stopoverHubsSummary }
+                    .firstOrNull { it.isNotBlank() }
+                    .orEmpty()
+            }
+            com.example.ui.components.RouteVipLoungePassCard(
+                originIata = localOrigin,
+                destinationIata = localDest,
+                stopoverHubsSummary = routeStopoverHubs,
+                selectedLounges = selectedVipLounges,
+                onToggleLoungePass = onToggleVipLoungePass,
+                isConfirmedTripView = false
+            )
+        }
+
+        item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -486,15 +505,16 @@ fun SearchAndResultsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Filtrar Resultados (${offers.size} opções)",
+                        text = "Filtrar Resultados (${offers.size} opções • $localDate)",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Diretos & Conexões NDC",
+                        text = "Menor Tarifa: ${selectedCurrency.format(lowestCurrentFareEur)}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Row(
@@ -525,9 +545,12 @@ fun SearchAndResultsScreen(
         }
 
         items(offers, key = { it.offerId }) { offer ->
+            val isCheapestOffer = offer.offerId == offers.firstOrNull()?.offerId
             AnimatedVisibility(visible = true) {
                 FlightOfferCard(
                     offer = offer,
+                    isBestFareOffer = isCheapestOffer,
+                    selectedCurrency = selectedCurrency,
                     onSelectOffer = onSelectOfferForCheckout,
                     onInspectAircraft = onInspectAircraft
                 )

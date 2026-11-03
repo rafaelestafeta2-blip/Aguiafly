@@ -20,7 +20,8 @@ data class TravelPromotionDeal(
     val isDirectFlight: Boolean = true,
     val highlightBadge: String, // ex: "🔥 -45% OFF", "⚡ SUPER TARIFA", "💎 EXECUTIVA", "🏖️ PRAIA"
     val category: String, // "Todas", "Europa", "Américas", "Mundo", "Praias"
-    val tagline: String
+    val tagline: String,
+    val matchedOffer: EnrichedFlightOffer? = null
 ) {
     val formattedDisplayPrice: String
         get() = MarkupEngine.formatEur(displayTotalEur)

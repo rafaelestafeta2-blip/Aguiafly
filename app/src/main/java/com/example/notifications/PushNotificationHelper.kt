@@ -19,26 +19,33 @@ import com.example.R
 import com.example.data.model.PromotionalDealsCatalog
 import com.example.data.model.TravelPromotionDeal
 import com.example.domain.pricing.MarkupEngine
-import kotlin.random.Random
 
 /**
  * Helper responsible for creating the Android Notification Channel,
- * dispatching high-priority Push Notifications for promotional flight fares,
+ * dispatching intelligent, non-intrusive Push Notifications for promotional flight fares,
  * and running the Automatic Global Multi-Country Super-Promo Radar on launch and in background.
  */
 object PushNotificationHelper {
     const val CHANNEL_ID = "aguiafly_promo_alerts"
     private const val CHANNEL_NAME = "Radar Global de Super Promoções AguiaFly"
-    private const val CHANNEL_DESC = "Notificações Push automáticas de super promoções internacionais e alertas de queda de preço NDC"
+    private const val CHANNEL_DESC = "Notificações Push inteligentes de super promoções internacionais e quedas reais de tarifa NDC"
 
     private const val PREFS_NAME = "aguiafly_global_promo_radar_prefs"
     private const val KEY_AUTO_RADAR_ENABLED = "auto_global_radar_enabled"
     private const val KEY_LAST_AUTO_PUSH_MS = "last_auto_push_timestamp_ms"
     private const val KEY_LAST_DEAL_INDEX = "last_notified_deal_index"
+    private const val KEY_LAST_NOTIFIED_DEAL_ID = "last_notified_deal_id"
+    private const val KEY_ROUTE_ALERT_LAST_MS_PREFIX = "route_alert_last_ms_"
     private const val GLOBAL_RADAR_JOB_ID = 7701
 
-    // Cooldown de 30 minutos para disparo automático ao abrir o app (ou imediato se for o primeiro acesso ou manual)
-    private const val STARTUP_AUTO_COOLDOWN_MS = 30L * 60L * 1000L
+    // ID fixo para o Radar Global: substitui silenciosamente qualquer banner anterior em vez de empilhar várias notificações
+    private const val NOTIFICATION_ID_GLOBAL_PROMO = 8801
+    private const val NOTIFICATION_ID_ROUTE_BASE = 8900
+
+    // Janela inteligente de 4 horas entre notificações automáticas globais para evitar spam
+    private const val SMART_PROMO_COOLDOWN_MS = 4L * 60L * 60L * 1000L
+    // Janela mínima de 2 horas para alertas de rota específica
+    private const val ROUTE_ALERT_COOLDOWN_MS = 2L * 60L * 60L * 1000L
 
     fun ensureNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -113,9 +120,10 @@ object PushNotificationHelper {
     }
 
     /**
-     * Dispara automaticamente uma notificação Push de Super Promoção Internacional para diferentes países
-     * (sem exigir que o utilizador selecione previamente um destino).
+     * Dispara de forma inteligente uma única notificação Push de Super Promoção Internacional
+     * apenas quando respeitado o intervalo inteligente (4h) e priorizando a menor tarifa real.
      */
+    @Synchronized
     fun triggerAutoGlobalPromoRadarIfEligible(
         context: Context,
         currentOriginIata: String,
@@ -130,7 +138,7 @@ object PushNotificationHelper {
         val now = System.currentTimeMillis()
         val lastPushMs = prefs.getLong(KEY_LAST_AUTO_PUSH_MS, 0L)
 
-        if (!forceImmediate && (now - lastPushMs) < STARTUP_AUTO_COOLDOWN_MS) {
+        if (!forceImmediate && (now - lastPushMs) < SMART_PROMO_COOLDOWN_MS) {
             return null
         }
 
@@ -141,15 +149,23 @@ object PushNotificationHelper {
         }
         if (catalogDeals.isEmpty()) return null
 
-        val nextIdx = (prefs.getInt(KEY_LAST_DEAL_INDEX, -1) + 1) % catalogDeals.size
-        val chosenDeal = catalogDeals[nextIdx]
+        val lastNotifiedDealId = prefs.getString(KEY_LAST_NOTIFIED_DEAL_ID, null)
+        // Seleciona de forma inteligente a promoção mais barata e com maior desconto que ainda não foi notificada
+        val sortedByBestPrice = catalogDeals.sortedWith(
+            compareBy<TravelPromotionDeal> { it.displayTotalEur }
+                .thenByDescending { it.discountPercent }
+        )
+        val chosenDeal = sortedByBestPrice.firstOrNull { it.id != lastNotifiedDealId }
+            ?: sortedByBestPrice.first()
 
+        val nextIdx = (prefs.getInt(KEY_LAST_DEAL_INDEX, -1) + 1) % catalogDeals.size
         prefs.edit()
             .putLong(KEY_LAST_AUTO_PUSH_MS, now)
             .putInt(KEY_LAST_DEAL_INDEX, nextIdx)
+            .putString(KEY_LAST_NOTIFIED_DEAL_ID, chosenDeal.id)
             .apply()
 
-        showAutomaticGlobalCountryPromoNotification(context, chosenDeal)
+        dispatchGlobalPromoNotificationInternal(context, chosenDeal)
         return chosenDeal
     }
 
@@ -157,24 +173,37 @@ object PushNotificationHelper {
         context: Context,
         deal: TravelPromotionDeal
     ) {
+        // Respeita o filtro inteligente para nunca disparar notificações seguidas
+        triggerAutoGlobalPromoRadarIfEligible(
+            context = context,
+            currentOriginIata = deal.originIata,
+            deals = listOf(deal),
+            forceImmediate = false
+        )
+    }
+
+    private fun dispatchGlobalPromoNotificationInternal(
+        context: Context,
+        deal: TravelPromotionDeal
+    ) {
         ensureNotificationChannel(context)
         if (!hasNotificationPermission(context)) return
 
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("promo_origin", deal.originIata)
             putExtra("promo_destination", deal.destinationIata)
             putExtra("promo_deal_id", deal.id)
         }
         val pendingIntent = PendingIntent.getActivity(
             context,
-            Random.nextInt(1000, 9999),
+            NOTIFICATION_ID_GLOBAL_PROMO,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val title = "🌍 Super Promoção (${deal.discountPercent}% OFF): ${deal.originCity} ➔ ${deal.destinationCity}, ${deal.destinationCountry}!"
-        val body = "Tarifa relâmpago detetada pelo Radar Global AguiaFly: voe de ${deal.originIata} para ${deal.destinationCity} (${deal.destinationIata}) por apenas ${deal.formattedDisplayPrice} (antes ${deal.formattedOriginalPrice}) na ${deal.airlineName}!"
+        val body = "Menor tarifa encontrada pelo Radar Inteligente AguiaFly: voe de ${deal.originIata} para ${deal.destinationCity} (${deal.destinationIata}) por apenas ${deal.formattedDisplayPrice} (antes ${deal.formattedOriginalPrice}) na ${deal.airlineName}. Toque para reservar!"
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher_round)
@@ -182,17 +211,19 @@ object PushNotificationHelper {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build()
 
         try {
-            NotificationManagerCompat.from(context).notify(Random.nextInt(3000, 99999), notification)
+            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID_GLOBAL_PROMO, notification)
         } catch (_: SecurityException) {
             // Ignored if permission was revoked at runtime
         }
     }
 
+    @Synchronized
     fun showPromotionalPriceNotification(
         context: Context,
         originIata: String,
@@ -205,26 +236,36 @@ object PushNotificationHelper {
         ensureNotificationChannel(context)
         if (!hasNotificationPermission(context)) return
 
+        val routeKey = "${originIata.uppercase()}_${destinationIata.uppercase()}"
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val lastRoutePushMs = prefs.getLong("$KEY_ROUTE_ALERT_LAST_MS_PREFIX$routeKey", 0L)
+        if ((now - lastRoutePushMs) < ROUTE_ALERT_COOLDOWN_MS) {
+            return
+        }
+        prefs.edit().putLong("$KEY_ROUTE_ALERT_LAST_MS_PREFIX$routeKey", now).apply()
+
+        val routeNotificationId = NOTIFICATION_ID_ROUTE_BASE + (routeKey.hashCode() and 0x0FFF)
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("promo_origin", originIata)
             putExtra("promo_destination", destinationIata)
         }
         val pendingIntent = PendingIntent.getActivity(
             context,
-            Random.nextInt(1000, 9999),
+            routeNotificationId,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val savingsEur = (baselinePriceEur - promoPriceEur).coerceAtLeast(0.0)
-        val title = "🔥 Alerta de Promoção: $originIata ➔ $destinationIata por ${MarkupEngine.formatEur(promoPriceEur)}!"
+        val title = "🔥 Alerta de Preço: $originIata ➔ $destinationIata por ${MarkupEngine.formatEur(promoPriceEur)}!"
         val body = buildString {
             append("$airlineName (${cabinClass.uppercase()}) atingiu sua meta! ")
             if (savingsEur > 0.0) {
-                append("Economia imediata de ${MarkupEngine.formatEur(savingsEur)} face à tarifa anterior (${MarkupEngine.formatEur(baselinePriceEur)}).")
+                append("Economia imediata de ${MarkupEngine.formatEur(savingsEur)} face à tarifa anterior (${MarkupEngine.formatEur(baselinePriceEur)}). Toque para emitir agora.")
             } else {
-                append("Tarifa promocional disponível agora no AguiaFly.")
+                append("Tarifa promocional disponível agora no AguiaFly. Toque para emitir.")
             }
         }
 
@@ -234,12 +275,13 @@ object PushNotificationHelper {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build()
 
         try {
-            NotificationManagerCompat.from(context).notify(Random.nextInt(2000, 99999), notification)
+            NotificationManagerCompat.from(context).notify(routeNotificationId, notification)
         } catch (_: SecurityException) {
             // Ignored if permission was revoked at runtime
         }

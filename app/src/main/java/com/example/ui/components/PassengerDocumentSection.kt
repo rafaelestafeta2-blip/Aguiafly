@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -8,37 +9,61 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ScheduleSend
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.data.model.PassengerDocumentInfo
 import com.example.data.model.TravelDocType
+import com.example.domain.security.PassportSecurityValidator
+import com.example.domain.security.PassportValidityStatus
 
 @Composable
 fun PassengerDocumentSection(
     documentInfo: PassengerDocumentInfo,
     onUpdateDocumentInfo: (PassengerDocumentInfo) -> Unit,
+    flightDepartureDateIso: String? = null,
     modifier: Modifier = Modifier
 ) {
     val cyan = MaterialTheme.colorScheme.primary
     val amber = MaterialTheme.colorScheme.secondary
+    var maskDocumentNumber by remember { mutableStateOf(false) }
+
+    val expiryAssessment = remember(documentInfo.expiryDate, flightDepartureDateIso) {
+        PassportSecurityValidator.validateDocumentExpiry(
+            expiryDateIso = documentInfo.expiryDate,
+            referenceFlightDateIso = flightDepartureDateIso
+        )
+    }
 
     Surface(
         shape = RoundedCornerShape(18.dp),
@@ -64,7 +89,7 @@ fun PassengerDocumentSection(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Exigido pelas companhias aéreas (APIS) para emitir o Cartão de Embarque",
+                        text = "Exigido pelas companhias aéreas (APIS) • Validação ICAO de 6 meses ativa",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -105,6 +130,29 @@ fun PassengerDocumentSection(
                         }
                     )
                 },
+                visualTransformation = if (maskDocumentNumber) {
+                    PasswordVisualTransformation()
+                } else {
+                    VisualTransformation.None
+                },
+                trailingIcon = {
+                    IconButton(
+                        onClick = { maskDocumentNumber = !maskDocumentNumber },
+                        modifier = Modifier.testTag("toggle_passport_mask_checkout_button")
+                    ) {
+                        Icon(
+                            imageVector = if (maskDocumentNumber) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (maskDocumentNumber) "Revelar documento" else "Mascarar documento",
+                            tint = cyan
+                        )
+                    }
+                },
+                supportingText = if (documentInfo.documentNumber.isNotBlank()) {
+                    {
+                        val maskedPreview = PassportSecurityValidator.maskDocumentNumber(documentInfo.documentNumber)
+                        Text("Exibição protegida no bilhete/cofre: $maskedPreview")
+                    }
+                } else null,
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -136,6 +184,68 @@ fun PassengerDocumentSection(
                         .weight(1f)
                         .testTag("passenger_doc_expiry_input")
                 )
+            }
+
+            // Diagnóstico de Validade Internacional do Passaporte (Regra ICAO 6 Meses)
+            if (documentInfo.expiryDate.isNotBlank()) {
+                val (badgeBg, badgeBorder, badgeText) = when (expiryAssessment.status) {
+                    PassportValidityStatus.VALID -> Triple(
+                        Color(0xFF065F46).copy(alpha = 0.25f),
+                        Color(0xFF10B981).copy(alpha = 0.6f),
+                        Color(0xFF34D399)
+                    )
+                    PassportValidityStatus.EXPIRING_WITHIN_6_MONTHS -> Triple(
+                        Color(0xFF78350F).copy(alpha = 0.30f),
+                        Color(0xFFF59E0B).copy(alpha = 0.65f),
+                        Color(0xFFFBBF24)
+                    )
+                    PassportValidityStatus.EXPIRED,
+                    PassportValidityStatus.INVALID_DATE_FORMAT,
+                    PassportValidityStatus.EMPTY -> Triple(
+                        Color(0xFF7F1D1D).copy(alpha = 0.30f),
+                        Color(0xFFEF4444).copy(alpha = 0.70f),
+                        Color(0xFFFCA5A5)
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = badgeBg,
+                    border = BorderStroke(1.dp, badgeBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("passport_expiry_status_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (expiryAssessment.status == PassportValidityStatus.VALID) {
+                                Icons.Default.CheckCircle
+                            } else {
+                                Icons.Default.Warning
+                            },
+                            contentDescription = null,
+                            tint = badgeText,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                            Text(
+                                text = expiryAssessment.badgeTitle,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = badgeText
+                            )
+                            Text(
+                                text = expiryAssessment.helperMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
 
             OutlinedTextField(

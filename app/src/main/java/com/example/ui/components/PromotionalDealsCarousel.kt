@@ -232,7 +232,7 @@ fun PromotionalDealsCarousel(
             pageSpacing = 12.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(230.dp)
+                .height(248.dp)
                 .testTag("promotional_deals_horizontal_pager")
         ) { page ->
             val deal = deals.getOrNull(page)
@@ -338,6 +338,8 @@ fun PromotionalDealBannerCard(
                     // Badge de Promoção Chamativo
                     Box(
                         modifier = Modifier
+                            .weight(1f, fill = false)
+                            .padding(end = 6.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(
                                 Brush.horizontalGradient(
@@ -351,7 +353,9 @@ fun PromotionalDealBannerCard(
                             color = Color.White,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -377,20 +381,26 @@ fun PromotionalDealBannerCard(
                                 color = Color.White,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 10.sp
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
                 }
 
                 // Parte Inferior do Banner: Destino, Rota, Preço Promocional e Botão de Compra
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Bottom
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        ) {
                             Text(
                                 text = "${deal.destinationCity}, ${deal.destinationCountry}",
                                 style = MaterialTheme.typography.titleLarge,
@@ -400,10 +410,11 @@ fun PromotionalDealBannerCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "Saindo de ${deal.originCity} (${deal.originIata}) • Partida ${deal.departureDateIso}",
+                                text = "Saindo de ${deal.originCity} (${deal.originIata}) • ${deal.departureDateIso}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.85f),
-                                maxLines = 1
+                                color = Color.White.copy(alpha = 0.88f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = deal.tagline,
@@ -414,44 +425,48 @@ fun PromotionalDealBannerCard(
                             )
                         }
 
-                        // Bloco de Preços
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            modifier = Modifier.padding(start = 8.dp)
-                        ) {
+                        // Bloco de Preços sem quebra de linha
+                        Column(horizontalAlignment = Alignment.End) {
                             Text(
                                 text = selectedCurrency.format(deal.originalFareEur),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White.copy(alpha = 0.6f),
-                                textDecoration = TextDecoration.LineThrough
+                                textDecoration = TextDecoration.LineThrough,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             Text(
                                 text = selectedCurrency.format(deal.displayTotalEur),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Black,
                                 color = gold,
-                                fontSize = 22.sp
+                                fontSize = 22.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             Text(
                                 text = "Tarifa Final (${selectedCurrency.code})",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White.copy(alpha = 0.7f),
-                                fontSize = 9.sp
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
 
-                    // Botão de Ação: "Comprar Agora"
+                    // Botão de Ação em linha única sem corte de texto
                     Button(
                         onClick = onClickToBook,
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = gold,
                             contentColor = Color(0xFF03132B)
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(42.dp)
+                            .height(46.dp)
                             .testTag("buy_deal_button_${deal.destinationIata}")
                     ) {
                         Icon(
@@ -461,9 +476,12 @@ fun PromotionalDealBannerCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Aproveitar Promoção por ${selectedCurrency.format(deal.displayTotalEur)} ➔",
+                            text = "Aproveitar por ${selectedCurrency.format(deal.displayTotalEur)} ➔",
                             style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

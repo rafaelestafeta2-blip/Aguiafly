@@ -90,10 +90,24 @@ fun OfficialPassportIdPageCard(
     onChangeProfilePhotoClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var revealFullPassportNumber by remember { mutableStateOf(false) }
     val cleanSurname = holderFullName.trim().split(" ").lastOrNull()?.uppercase()?.ifBlank { "TITULAR" } ?: "TITULAR"
     val cleanGiven = holderFullName.trim().split(" ").dropLast(1).joinToString("<").uppercase().ifBlank { "AGUIAFLY" }
     val cleanDoc = passportNumber.trim().uppercase().replace(" ", "")
-    val mrzDoc = cleanDoc.ifBlank { "<<<<<<<<<" }
+    val displayedPassportNumber = if (cleanDoc.isBlank()) {
+        "NÃO INFORMADO"
+    } else if (revealFullPassportNumber) {
+        cleanDoc
+    } else {
+        com.example.domain.security.PassportSecurityValidator.maskDocumentNumber(cleanDoc)
+    }
+    val mrzDoc = if (cleanDoc.isBlank()) {
+        "<<<<<<<<<"
+    } else if (revealFullPassportNumber) {
+        cleanDoc
+    } else {
+        "<<<<<<" + cleanDoc.takeLast(3)
+    }
     val isoCountry = CountryPassportCatalog.mrzCountryCode(nationality)
     val mrzLine1 = "P<${isoCountry}${cleanSurname}<<${cleanGiven}<<<<<<<<<<<<<<<<<<<<<<<<<<<<".take(44).padEnd(44, '<')
     val mrzLine2 = "${mrzDoc.padEnd(9, '<')}8${isoCountry}0000000M0000000AGUIAFLYNDC<<<<06".take(44).padEnd(44, '<')
@@ -134,7 +148,8 @@ fun OfficialPassportIdPageCard(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Image(
                             painter = painterResource(id = R.drawable.aguiafly_official_logo),
@@ -163,14 +178,18 @@ fun OfficialPassportIdPageCard(
                     Surface(
                         color = Color(0xFFE5B84B).copy(alpha = 0.16f),
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.border(
-                            1.dp,
-                            Color(0xFFE5B84B).copy(alpha = 0.5f),
-                            RoundedCornerShape(8.dp)
-                        )
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(
+                                1.dp,
+                                Color(0xFFE5B84B).copy(alpha = 0.5f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { revealFullPassportNumber = !revealFullPassportNumber }
+                            .testTag("toggle_passport_id_card_mask_button")
                     ) {
                         Text(
-                            text = "TIPO P • VIP",
+                            text = if (revealFullPassportNumber) "🔒 Ocultar Nº" else "👁 Mostrar Nº",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFE5B84B),
@@ -245,7 +264,7 @@ fun OfficialPassportIdPageCard(
                         ) {
                             PassportFieldRow(
                                 label = "Nº PASSAPORTE",
-                                value = cleanDoc.ifBlank { "NÃO INFORMADO" },
+                                value = displayedPassportNumber,
                                 modifier = Modifier.weight(1f)
                             )
                             PassportFieldRow(
