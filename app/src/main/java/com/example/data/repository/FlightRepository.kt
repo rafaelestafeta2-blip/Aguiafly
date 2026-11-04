@@ -59,9 +59,18 @@ class FlightRepository {
     @Volatile
     private var cachedAmadeusTokenExpiryMs: Long = 0L
 
+    fun getActiveDuffelToken(): String {
+        val t1 = runCatching { BuildConfig.DUFFEL_API_TOKEN }.getOrDefault("").trim()
+        if (t1.isNotBlank() && !t1.contains("PLACEHOLDER", ignoreCase = true)) return t1
+        val t2 = runCatching { BuildConfig.DUFFEL_API_KEY }.getOrDefault("").trim()
+        if (t2.isNotBlank() && !t2.contains("PLACEHOLDER", ignoreCase = true)) return t2
+        val t3 = runCatching { BuildConfig.DU }.getOrDefault("").trim()
+        if (t3.isNotBlank() && !t3.contains("PLACEHOLDER", ignoreCase = true)) return t3
+        return ""
+    }
+
     fun isDuffelConfigured(): Boolean {
-        val token = BuildConfig.DUFFEL_API_TOKEN
-        return token.isNotBlank() && token != "DUFFEL_SANDBOX_TOKEN_PLACEHOLDER"
+        return getActiveDuffelToken().isNotBlank()
     }
 
     /**
@@ -198,7 +207,7 @@ class FlightRepository {
 
         return try {
             val response = duffelApi.getPlaceSuggestions(
-                bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                bearerToken = "Bearer ${getActiveDuffelToken()}",
                 query = trimmed
             )
             val remoteMapped = response.data.mapNotNull { dto ->
@@ -263,7 +272,7 @@ class FlightRepository {
                 }
 
                 val response = duffelApi.createOfferRequest(
-                    bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                    bearerToken = "Bearer ${getActiveDuffelToken()}",
                     returnOffers = true,
                     body = DuffelOfferRequestEnvelope(
                         data = DuffelOfferRequestPayload(
@@ -724,7 +733,7 @@ class FlightRepository {
             return baseDeals.map { deal ->
                 try {
                     val resp = duffelApi.createOfferRequest(
-                        bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                        bearerToken = "Bearer ${getActiveDuffelToken()}",
                         body = DuffelOfferRequestEnvelope(
                             data = DuffelOfferRequestPayload(
                                 slices = listOf(
@@ -936,7 +945,7 @@ class FlightRepository {
             val resolvedLiveOffer = if (offer.isLiveDuffelOffer && offer.offerId.startsWith("off_") && !offer.offerId.startsWith("off_duffel_ndc_") && !offer.offerId.startsWith("off_deal_")) {
                 val revalidatedDto = try {
                     duffelApi.getOfferById(
-                        bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                        bearerToken = "Bearer ${getActiveDuffelToken()}",
                         offerId = offer.offerId
                     ).data
                 } catch (e: CancellationException) {
@@ -1092,7 +1101,7 @@ class FlightRepository {
                 // SE FALHAR -> Cancela imediatamente a autorização na Stripe (paymentIntents.cancel)!
                 val orderResp = try {
                     duffelApi.createInstantOrder(
-                        bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                        bearerToken = "Bearer ${getActiveDuffelToken()}",
                         body = DuffelOrderCreateEnvelope(
                             data = DuffelOrderCreatePayload(
                                 selectedOffers = listOf(resolvedLiveOffer.offerId),
@@ -1385,7 +1394,7 @@ class FlightRepository {
             if (isDuffelConfigured() && ticket.orderId.isNotBlank()) {
                 try {
                     val response = duffelApi.createOrderCancellation(
-                        bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                        bearerToken = "Bearer ${getActiveDuffelToken()}",
                         body = DuffelOrderCancellationCreateEnvelope(
                             data = DuffelOrderCancellationCreatePayload(
                                 orderId = ticket.orderId
@@ -1447,7 +1456,7 @@ class FlightRepository {
             if (quote.isLiveDuffelQuote && isDuffelConfigured()) {
                 try {
                     val confirmResp = duffelApi.confirmOrderCancellation(
-                        bearerToken = "Bearer ${BuildConfig.DUFFEL_API_TOKEN}",
+                        bearerToken = "Bearer ${getActiveDuffelToken()}",
                         cancellationId = quote.cancellationId
                     )
                     resolvedCancellationId = confirmResp.data.id
