@@ -49,4 +49,24 @@ object NetworkClient {
             .build()
             .create(StripePaymentService::class.java)
     }
+
+    val amadeusApi: AmadeusGdsApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://api.amadeus.com/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(AmadeusGdsApiService::class.java)
+    }
+
+    val kiwiTequilaApi: KiwiTequilaApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://api.tequila.kiwi.com/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(KiwiTequilaApiService::class.java)
+    }
 }
+
+

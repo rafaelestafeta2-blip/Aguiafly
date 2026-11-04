@@ -186,10 +186,19 @@ object PremiumEcosystemCatalog {
         val normOrigin = originIata.trim().uppercase().ifBlank { "LIS" }
         val normDest = destinationIata.trim().uppercase().ifBlank { "CDG" }
 
+        val ignoredWords = setOf("VIA", "POR", "COM", "SEM", "VOO", "AND", "THE", "FOR")
         val connectionIatas = stopoverHubsSummary
+            .replace("(", " ")
+            .replace(")", " ")
             .split(",", "•", "/", " ", "-")
             .map { it.trim().uppercase() }
-            .filter { it.length == 3 && it.all { ch -> ch.isLetter() } && it != normOrigin && it != normDest }
+            .filter {
+                it.length == 3 &&
+                    it.all { ch -> ch.isLetter() } &&
+                    it !in ignoredWords &&
+                    it != normOrigin &&
+                    it != normDest
+            }
             .distinct()
 
         // Se o voo for direto ou não tiver hub explícito na string, oferece Origem + Hub de Conexão/Retorno da Rota

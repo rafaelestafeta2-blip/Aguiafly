@@ -256,12 +256,12 @@ fun SearchAndResultsScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Busca Global de Voos NDC",
+                            text = "Busca Global de Voos",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Voos Diretos & Conexões • Exibição em ${selectedCurrency.badgeLabel}",
+                            text = "Todas as Companhias • Voos Diretos & Conexões (${selectedCurrency.badgeLabel})",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -451,91 +451,175 @@ fun SearchAndResultsScreen(
             }
         }
 
+        if (priceAlerts.isNotEmpty()) {
+            item {
+                ActivePriceAlertsBannerCard(
+                    alerts = priceAlerts,
+                    currentOriginIata = localOrigin,
+                    isAutoGlobalRadarEnabled = isAutoGlobalRadarEnabled,
+                    onToggleAutoGlobalRadar = { enabled ->
+                        isAutoGlobalRadarEnabled = enabled
+                        PushNotificationHelper.setGlobalAutoPromoRadarEnabled(context, enabled)
+                        if (enabled) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !PushNotificationHelper.hasNotificationPermission(context)
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                onTriggerPromoCronSweep()
+                            }
+                        }
+                    },
+                    onSelectAlertRoute = { alert ->
+                        localOrigin = alert.originIata
+                        localDest = alert.destinationIata
+                        localCabin = alert.cabinClass
+                        onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                        onExecuteSearch()
+                    },
+                    onDeleteAlert = onDeletePriceAlert
+                )
+            }
+        }
+
         item {
-            ActivePriceAlertsBannerCard(
-                alerts = priceAlerts,
-                currentOriginIata = localOrigin,
-                isAutoGlobalRadarEnabled = isAutoGlobalRadarEnabled,
-                onToggleAutoGlobalRadar = { enabled ->
-                    isAutoGlobalRadarEnabled = enabled
-                    PushNotificationHelper.setGlobalAutoPromoRadarEnabled(context, enabled)
-                    if (enabled) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                            !PushNotificationHelper.hasNotificationPermission(context)
+            val origCityName = remember(localOrigin) {
+                PlaceAutocompleteCatalog.resolveByIata(localOrigin).cityName
+            }
+            val destCityName = remember(localDest) {
+                PlaceAutocompleteCatalog.resolveByIata(localDest).cityName
+            }
+            val shortDateLabel = remember(localDate) {
+                val parts = localDate.take(10).split("-")
+                if (parts.size == 3) "${parts[2]}/${parts[1]}" else localDate
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Barra Superior de Resultados estilo eDreams ("Lisboa - Fortaleza | qua, 30/12 👤 1 | [🔍 Alterar]")
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = androidx.compose.ui.graphics.Color.White,
+                    shadowElevation = 3.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edreams_results_route_header")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } else {
-                            onTriggerPromoCronSweep()
+                            // Ícone amarelo/dourado estilo eDreams
+                            Row(
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(2.dp),
+                                    color = androidx.compose.ui.graphics.Color(0xFFFACC15),
+                                    modifier = Modifier.size(6.dp)
+                                ) {}
+                                Surface(
+                                    shape = RoundedCornerShape(3.dp),
+                                    color = androidx.compose.ui.graphics.Color(0xFFEAB308),
+                                    modifier = Modifier.size(12.dp)
+                                ) {}
+                            }
+                            Column {
+                                Text(
+                                    text = "$origCityName - $destCityName",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = androidx.compose.ui.graphics.Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = "$shortDateLabel  •  👤 ${passengers.summaryLabel} (${selectedCurrency.format(lowestCurrentFareEur)})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = androidx.compose.ui.graphics.Color(0xFF64748B),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = androidx.compose.ui.graphics.Color.White,
+                            modifier = Modifier
+                                .border(
+                                    1.5.dp,
+                                    androidx.compose.ui.graphics.Color(0xFF005AA3),
+                                    RoundedCornerShape(50)
+                                )
+                                .clip(RoundedCornerShape(50))
+                                .clickable { onExecuteSearch() }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = androidx.compose.ui.graphics.Color(0xFF005AA3),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Alterar",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = androidx.compose.ui.graphics.Color(0xFF005AA3),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
-                },
-                onSelectAlertRoute = { alert ->
-                    localOrigin = alert.originIata
-                    localDest = alert.destinationIata
-                    localCabin = alert.cabinClass
-                    onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
-                    onExecuteSearch()
-                },
-                onDeleteAlert = onDeletePriceAlert
-            )
-        }
-
-        item {
-            val routeStopoverHubs = remember(offers) {
-                offers
-                    .map { it.stopoverHubsSummary }
-                    .firstOrNull { it.isNotBlank() }
-                    .orEmpty()
-            }
-            com.example.ui.components.RouteVipLoungePassCard(
-                originIata = localOrigin,
-                destinationIata = localDest,
-                stopoverHubsSummary = routeStopoverHubs,
-                selectedLounges = selectedVipLounges,
-                onToggleLoungePass = onToggleVipLoungePass,
-                isConfirmedTripView = false
-            )
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Filtrar Resultados (${offers.size} opções • $localDate)",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Menor Tarifa: ${selectedCurrency.format(lowestCurrentFareEur)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
+
+                // Pílulas de Filtro estilo eDreams ("⇅ Melhor", "Escalas", "Horários", "Widebody")
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FlightFilterOption.entries.forEach { filter ->
+                    FlightFilterOption.entries.forEachIndexed { idx, filter ->
+                        val isSelected = activeFilter == filter
+                        val pillLabel = when (idx) {
+                            0 -> "⇅ Melhor (${offers.size})"
+                            1 -> "Escalas (Diretos)"
+                            else -> filter.label
+                        }
                         FilterChip(
-                            selected = activeFilter == filter,
+                            selected = isSelected,
                             onClick = { onSelectFilter(filter) },
+                            shape = RoundedCornerShape(50),
                             label = {
                                 Text(
-                                    text = filter.label,
-                                    fontWeight = if (activeFilter == filter) FontWeight.Bold else FontWeight.Medium
+                                    text = pillLabel,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
                                 )
                             },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                containerColor = androidx.compose.ui.graphics.Color.White,
+                                labelColor = androidx.compose.ui.graphics.Color(0xFF334155),
+                                selectedContainerColor = androidx.compose.ui.graphics.Color(0xFFE0F2FE),
+                                selectedLabelColor = androidx.compose.ui.graphics.Color(0xFF005AA3)
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isSelected,
+                                borderColor = androidx.compose.ui.graphics.Color(0xFFCBD5E1),
+                                selectedBorderColor = androidx.compose.ui.graphics.Color(0xFF005AA3),
+                                borderWidth = 1.dp,
+                                selectedBorderWidth = 1.8.dp
                             ),
                             modifier = Modifier.testTag("filter_chip_${filter.name.lowercase()}")
                         )

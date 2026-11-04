@@ -174,22 +174,133 @@ object AirportAndLoyaltyCatalog {
         )
     }
 
+    /**
+     * Gera todos os dias (1..N) de um mês específico (`year`, `month`) calibrados diretamente
+     * pela tarifa real (`referenceLowestFareEur`) retornada na busca da rota para `anchorDateIso`,
+     * garantindo que o preço exibido no calendário corresponda ao preço real dos voos.
+     */
+    fun generateFullMonthFareCalendar(
+        year: Int,
+        month: Int,
+        originIata: String,
+        destinationIata: String,
+        cabinClass: String = "economy",
+        tripMultiplier: Double = 1.0,
+        passengerMultiplier: Double = 1.0,
+        markupConfig: MarkupConfig = MarkupConfig(),
+        anchorDateIso: String? = null,
+        referenceLowestFareEur: Double? = null
+    ): List<DailyFareSlot> {
+        val firstDay = LocalDate.of(year, month, 1)
+        val lengthOfMonth = firstDay.lengthOfMonth()
+        val dates = (0 until lengthOfMonth).map { firstDay.plusDays(it.toLong()) }
+
+        val baseRouteEcoNet = resolveRouteBaseNetEcoEur(originIata, destinationIata)
+        val cabinMult = cabinClassMultiplier(cabinClass)
+        val paxTripFactor = (tripMultiplier * passengerMultiplier).coerceAtLeast(1.0)
+
+        // Se temos a tarifa real retornada pela API na data pesquisada, calibramos a curva do mês por ela
+        val anchorDateMult = if (!anchorDateIso.isNullOrBlank()) {
+            calculateDateFareMultiplier(originIata, destinationIata, anchorDateIso)
+        } else {
+            1.0
+        }
+        val catalogAnchorDisplay = run {
+            val singlePaxNet = round(baseRouteEcoNet * cabinMult * anchorDateMult * 100.0) / 100.0
+            val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
+            MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig).displayFareBeforeAncillariesEur
+        }
+        val liveCalibrationRatio = if (referenceLowestFareEur != null && referenceLowestFareEur > 10.0 && catalogAnchorDisplay > 1.0) {
+            referenceLowestFareEur / catalogAnchorDisplay
+        } else {
+            1.0
+        }
+
+        val rawSlots = dates.map { date ->
+            val iso = date.toString()
+            val dow = date.dayOfWeek.value
+            val dateMult = calculateDateFareMultiplier(originIata, destinationIata, iso)
+            val singlePaxNet = round(baseRouteEcoNet * cabinMult * dateMult * 100.0) / 100.0
+            val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
+            val breakdown = MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig)
+            val calibratedDisplayEur = if (!anchorDateIso.isNullOrBlank() && iso == anchorDateIso.take(10) && referenceLowestFareEur != null && referenceLowestFareEur > 10.0) {
+                referenceLowestFareEur
+            } else {
+                round(breakdown.displayFareBeforeAncillariesEur * liveCalibrationRatio * 100.0) / 100.0
+            }
+            Triple(date, dow, calibratedDisplayEur)
+        }
+
+        val minFareInMonth = rawSlots.minOfOrNull { it.third } ?: 0.0
+        val maxFareInMonth = rawSlots.maxOfOrNull { it.third } ?: minFareInMonth
+
+        return rawSlots.map { (date, dow, displayEur) ->
+            val isAbsoluteLowest = abs(displayEur - minFareInMonth) < 0.02
+            val isCheapDay = isAbsoluteLowest || displayEur <= (minFareInMonth * 1.06)
+            val savingsPct = if (maxFareInMonth > displayEur && maxFareInMonth > 0.0) {
+                (((maxFareInMonth - displayEur) / maxFareInMonth) * 100.0).roundToInt().coerceIn(5, 45)
+            } else {
+                0
+            }
+
+            DailyFareSlot(
+                isoDate = date.toString(),
+                dayOfWeekShort = dayOfWeekNames[dow] ?: "Dia",
+                dayMonthFormatted = date.format(shortMonthFormatter).replace(".", ""),
+                estimatedMinEur = displayEur,
+                isPromoDay = isCheapDay,
+                isLowestOfPeriod = isAbsoluteLowest,
+                savingsPercent = savingsPct
+            )
+        }
+    }
+
+    fun resolveAirlineDisplayName(airlineIata: String): String {
+        return when (airlineIata.trim().uppercase()) {
+            "TP" -> "TAP Portugal"
+            "G3" -> "Gol"
+            "LA", "JJ" -> "LATAM Airlines"
+            "AD" -> "Azul Linhas Aéreas"
+            "UX" -> "Air Europa"
+            "IB" -> "Iberia"
+            "I2" -> "Iberia Express"
+            "VY" -> "Vueling Airlines"
+            "FR" -> "Ryanair"
+            "U2" -> "easyJet"
+            "AF" -> "Air France"
+            "KL" -> "KLM Royal Dutch"
+            "LH" -> "Lufthansa"
+            "LX" -> "SWISS"
+            "BA" -> "British Airways"
+            "EK" -> "Emirates"
+            "QR" -> "Qatar Airways"
+            else -> "Companhia $airlineIata"
+        }
+    }
+
     fun resolveAirlineIdentity(
         airlineIata: String,
-        cabinClass: String,
-        isWidebody: Boolean
+        cabinClass: String = "economy",
+        isWidebody: Boolean = false
     ): AirlineBrandIdentity {
         val code = airlineIata.trim().uppercase()
         val (alliance, hexColor, co2Saving) = when (code) {
             "TP" -> Triple("Star Alliance", 0xFF10B981, 21)
+            "G3" -> Triple("Parceiro Gol Smiles", 0xFFF97316, 18)
+            "AD" -> Triple("Azul TudoAzul", 0xFF0EA5E9, 19)
+            "UX" -> Triple("SkyTeam", 0xFF0284C7, 18)
+            "VY" -> Triple("IAG Partner", 0xFFEAB308, 20)
+            "FR" -> Triple("Low-Cost Europe", 0xFF1D4ED8, 22)
+            "U2" -> Triple("Europe Direct", 0xFFF97316, 20)
             "AF" -> Triple("SkyTeam", 0xFF38BDF8, 19)
             "KL" -> Triple("SkyTeam", 0xFF0EA5E9, 18)
             "LH" -> Triple("Star Alliance", 0xFFE5B84B, 17)
             "LX" -> Triple("Star Alliance", 0xFFF43F5E, 20)
-            "IB" -> Triple("oneworld", 0xFFF59E0B, 19)
+            "IB", "I2" -> Triple("oneworld", 0xFFF59E0B, 19)
             "BA" -> Triple("oneworld", 0xFF60A5FA, 16)
             "LA" -> Triple("Parceiro Global", 0xFFA855F7, 18)
-            else -> Triple("IATA NDC Partner", 0xFFE5B84B, 15)
+            "EK" -> Triple("Emirates Skywards", 0xFFD97706, 17)
+            else -> Triple("IATA NDC / GDS Partner", 0xFFE5B84B, 15)
         }
 
         val amenities = buildList {
@@ -202,11 +313,11 @@ object AirportAndLoyaltyCatalog {
                 add("Refeição Quente Premium")
                 add("Embarque Prioritário")
             } else {
-                add("Bagagem NDC Garantida")
-                add("Snack & Bebidas Cortesia")
+                add("Bagagem de Mão Incluída")
+                add("Tarifa Prime NDC Garantida")
             }
-            add("Wi-Fi Alta Velocidade")
-            add("USB-C & AC 110V")
+            add("Wi-Fi a Bordo")
+            add("USB-C & Tomada AC")
         }
 
         return AirlineBrandIdentity(

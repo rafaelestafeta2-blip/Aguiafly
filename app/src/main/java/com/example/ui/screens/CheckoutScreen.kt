@@ -1,16 +1,24 @@
 package com.example.ui.screens
 
+import android.app.Activity
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,10 +26,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.AirlineSeatReclineNormal
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -35,31 +51,36 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import android.app.Activity
-import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.ANCILLARY_SERVICE_MARGIN_EUR
 import com.example.data.model.EnrichedFlightOffer
 import com.example.data.model.FrequentFlyerSelection
 import com.example.data.model.MarkupConfig
 import com.example.data.model.PassengerDocumentInfo
 import com.example.data.model.PaymentCardInput
+import com.example.data.model.PlaceAutocompleteCatalog
 import com.example.data.model.SavedTravelerProfile
 import com.example.data.model.SelectedAncillaries
 import com.example.domain.pricing.MarkupEngine
+import com.example.ui.components.AirlineLogoBadge
 import com.example.ui.components.CheckoutFinancialSummaryCard
 import com.example.ui.components.FrequentFlyerCheckoutCard
 import com.example.ui.components.InteractiveCreditCardSection
@@ -67,6 +88,17 @@ import com.example.ui.components.PassengerDocumentSection
 import com.example.ui.components.SavedTravelerVaultCard
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlin.math.roundToInt
+
+enum class CheckoutWizardStep(val stepNumber: Int, val shortLabel: String, val topBarTitle: String) {
+    TRIP_SUMMARY(1, "1. Resumo", "Resumo da sua viagem"),
+    EXTRAS_OPTIONS(2, "2. Opções", "Bagagem, Assentos & Extras"),
+    PASSENGER_DATA(3, "3. Passageiro", "Dados do Passageiro"),
+    PAYMENT_ISSUE(4, "4. Pagamento", "Pagamento & Emissão")
+}
 
 @Composable
 fun CheckoutScreen(
@@ -99,7 +131,17 @@ fun CheckoutScreen(
     ) -> Unit,
     onBack: () -> Unit
 ) {
-    BackHandler { onBack() }
+    var currentStep by rememberSaveable { mutableStateOf(CheckoutWizardStep.TRIP_SUMMARY) }
+    var freezePriceEnabled by rememberSaveable { mutableStateOf(false) }
+
+    BackHandler {
+        when (currentStep) {
+            CheckoutWizardStep.TRIP_SUMMARY -> onBack()
+            CheckoutWizardStep.EXTRAS_OPTIONS -> currentStep = CheckoutWizardStep.TRIP_SUMMARY
+            CheckoutWizardStep.PASSENGER_DATA -> currentStep = CheckoutWizardStep.EXTRAS_OPTIONS
+            CheckoutWizardStep.PAYMENT_ISSUE -> currentStep = CheckoutWizardStep.PASSENGER_DATA
+        }
+    }
 
     val context = LocalContext.current
     DisposableEffect(context) {
@@ -140,7 +182,6 @@ fun CheckoutScreen(
     var saveToVaultOnCheckout by remember { mutableStateOf(true) }
     var hasAppliedVaultProfile by remember { mutableStateOf(false) }
 
-    // Auto-preenchimento a partir do Cofre de Viajante salvo no Firestore
     LaunchedEffect(savedTravelerProfile) {
         val vault = savedTravelerProfile
         if (vault != null && vault.isPopulated && !hasAppliedVaultProfile) {
@@ -195,537 +236,992 @@ fun CheckoutScreen(
         canSaveTravelerVault &&
         cardInput.isCompleteAndValid
 
-    LazyColumn(
+    val edreamsBlue = Color(0xFF005AA3)
+    val crossedOutReferenceEur = remember(breakdown.grandTotalEur) {
+        (breakdown.grandTotalEur * 1.188).roundToInt() + 0.47
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(
+                if (currentStep == CheckoutWizardStep.TRIP_SUMMARY) {
+                    Color(0xFFF4F7FB)
+                } else {
+                    MaterialTheme.colorScheme.background
+                }
+            )
     ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 1. Cabeçalho Superior Limpo estilo eDreams ("← Resumo da sua viagem" + Indicador de Etapas Clicável)
+        Surface(
+            color = Color.White,
+            shadowElevation = 3.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
-                        onClick = onBack,
+                        onClick = {
+                            when (currentStep) {
+                                CheckoutWizardStep.TRIP_SUMMARY -> onBack()
+                                CheckoutWizardStep.EXTRAS_OPTIONS -> currentStep = CheckoutWizardStep.TRIP_SUMMARY
+                                CheckoutWizardStep.PASSENGER_DATA -> currentStep = CheckoutWizardStep.EXTRAS_OPTIONS
+                                CheckoutWizardStep.PAYMENT_ISSUE -> currentStep = CheckoutWizardStep.PASSENGER_DATA
+                            }
+                        },
                         modifier = Modifier.testTag("checkout_back_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Voltar",
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = edreamsBlue
                         )
                     }
-                    Column {
-                        Text(
-                            text = "Checkout & Emissão de Passagem",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "${offer.airlineName} ${offer.flightNumber} • ${offer.originIata} → ${offer.destinationIata}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = currentStep.topBarTitle,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Normal,
+                        color = Color(0xFF475569),
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
                 }
 
-                // Banner de Sessão Blindada (FLAG_SECURE + Luhn + Idempotência)
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFF065F46).copy(alpha = 0.22f),
-                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.55f)),
+                // Barra de Etapas (1. Resumo ➔ 2. Opções ➔ 3. Passageiro ➔ 4. Pagamento)
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("checkout_security_shield_banner")
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = Color(0xFF34D399),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "Sessão Blindada PCI-DSS • Print/Gravação de Tela Bloqueados (FLAG_SECURE) • Anti-Duplicidade Ativo",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF6EE7B7)
-                        )
+                    CheckoutWizardStep.entries.forEach { step ->
+                        val isCurrent = step == currentStep
+                        val isCompleted = step.stepNumber < currentStep.stepNumber
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = when {
+                                isCurrent -> edreamsBlue
+                                isCompleted -> Color(0xFF159A74).copy(alpha = 0.14f)
+                                else -> Color(0xFFF1F5F9)
+                            },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable { currentStep = step }
+                                .testTag("checkout_step_tab_${step.stepNumber}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (isCompleted) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = Color(0xFF159A74),
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                                Text(
+                                    text = step.shortLabel,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isCurrent || isCompleted) FontWeight.Bold else FontWeight.Medium,
+                                    color = when {
+                                        isCurrent -> Color.White
+                                        isCompleted -> Color(0xFF159A74)
+                                        else -> Color(0xFF64748B)
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 1. Seleção de Assento (Padrão: Automático / Gratuito €0.00 vs Assento Premium com €2.00 de margem)
+        // 2. Conteúdo da Etapa Atual (1 página limpa por vez conforme o cliente vai clicando em Continuar/Next)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            AnimatedContent(
+                targetState = currentStep,
+                label = "checkout_wizard_step_transition"
+            ) { step ->
+                when (step) {
+                    CheckoutWizardStep.TRIP_SUMMARY -> {
+                        EdreamsTripSummaryStepContent(
+                            offer = offer,
+                            freezePriceEnabled = freezePriceEnabled,
+                            onToggleFreezePrice = { freezePriceEnabled = !freezePriceEnabled },
+                            onInspectAircraft = onInspectAircraftAndSeats
+                        )
+                    }
+
+                    CheckoutWizardStep.EXTRAS_OPTIONS -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(18.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "1. Escolha de Assento (100% Opcional)",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+
+                                        Surface(
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = if (!isPaidSeat) {
+                                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
+                                            } else {
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .border(
+                                                    width = if (!isPaidSeat) 1.5.dp else 1.dp,
+                                                    color = if (!isPaidSeat) MaterialTheme.colorScheme.tertiary else Color.Transparent,
+                                                    shape = RoundedCornerShape(14.dp)
+                                                )
+                                                .clickable { onSelectAutoFreeSeat() }
+                                                .testTag("checkout_auto_free_seat_radio")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    RadioButton(
+                                                        selected = !isPaidSeat,
+                                                        onClick = onSelectAutoFreeSeat
+                                                    )
+                                                    Column {
+                                                        Text(
+                                                            text = "Assento Automático / Gratuito (Padrão)",
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        Text(
+                                                            text = "A companhia aérea atribui o assento gratuitamente no check-in",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = "€0.00",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.tertiary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = if (isPaidSeat) {
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                            } else {
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .border(
+                                                    width = if (isPaidSeat) 1.5.dp else 1.dp,
+                                                    color = if (isPaidSeat) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                    shape = RoundedCornerShape(14.dp)
+                                                )
+                                                .clickable { onInspectAircraftAndSeats() }
+                                                .testTag("open_aircraft_seatmap_button")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    RadioButton(
+                                                        selected = isPaidSeat,
+                                                        onClick = onInspectAircraftAndSeats
+                                                    )
+                                                    Column {
+                                                        Text(
+                                                            text = if (isPaidSeat) {
+                                                                "Assento Premium: ${ancillaries.seatDesignator} (${offer.aircraftSpec.fullName})"
+                                                            } else {
+                                                                "Escolher Assento Premium (Janela / Corredor)"
+                                                            },
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        Text(
+                                                            text = "Tarifa cia ${MarkupEngine.formatEur(seatNetBase)} + Margem serviço transparente ${MarkupEngine.formatEur(ANCILLARY_SERVICE_MARGIN_EUR)}",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = "+${MarkupEngine.formatEur(markupConfig.seatSelectionFeeEur)}",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "2. Bagagem & Embarque Prioritário",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            if (hasAnyAncillary) {
+                                                TextButton(
+                                                    onClick = onClearAllAncillaries,
+                                                    modifier = Modifier.testTag("clear_all_ancillaries_button")
+                                                ) {
+                                                    Text("Desmarcar Tudo")
+                                                }
+                                            }
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Checkbox(
+                                                    checked = ancillaries.includeExtraBaggage23Kg,
+                                                    onCheckedChange = onToggleExtraBag,
+                                                    modifier = Modifier.testTag("extra_bag_checkbox")
+                                                )
+                                                Column {
+                                                    Text(
+                                                        text = "Bagagem Despachada 23kg (Opcional)",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                    Text(
+                                                        text = "Tarifa cia ${MarkupEngine.formatEur(bagNetBase)} + Margem serviço ${MarkupEngine.formatEur(ANCILLARY_SERVICE_MARGIN_EUR)}",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = "+${MarkupEngine.formatEur(markupConfig.extraBaggageFeeEur)}",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Checkbox(
+                                                    checked = ancillaries.includePriorityLounge,
+                                                    onCheckedChange = onTogglePriorityLounge,
+                                                    modifier = Modifier.testTag("priority_lounge_checkbox")
+                                                )
+                                                Text(
+                                                    text = "Embarque Prioritário & Fast Track (Opcional)",
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                            }
+                                            Text(
+                                                text = "+${MarkupEngine.formatEur(markupConfig.priorityBoardingFeeEur)}",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            item {
+                                com.example.ui.components.AiraloEsimSelectorCard(
+                                    destinationIata = offer.destinationIata,
+                                    destinationCity = offer.destinationCity,
+                                    selectedPackage = ancillaries.selectedEsimPackage,
+                                    onSelectPackage = onSelectAiraloEsim,
+                                    isPostBookingConfirmation = false
+                                )
+                            }
+
+                            item {
+                                com.example.ui.components.RouteVipLoungePassCard(
+                                    originIata = offer.originIata,
+                                    destinationIata = offer.destinationIata,
+                                    stopoverHubsSummary = offer.stopoverHubsSummary,
+                                    selectedLounges = ancillaries.selectedVipLounges,
+                                    onToggleLoungePass = onToggleVipLoungePass,
+                                    isConfirmedTripView = false
+                                )
+                            }
+
+                            item {
+                                com.example.ui.components.DestinationExperiencesSectionCard(
+                                    destinationIata = offer.destinationIata,
+                                    destinationCity = offer.destinationCity,
+                                    selectedExperiences = ancillaries.selectedExperiences,
+                                    onToggleExperience = onToggleDestinationExperience,
+                                    isPostPurchaseConfirmation = false
+                                )
+                            }
+                        }
+                    }
+
+                    CheckoutWizardStep.PASSENGER_DATA -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            item {
+                                SavedTravelerVaultCard(
+                                    savedProfile = savedTravelerProfile,
+                                    saveToVaultOnCheckout = saveToVaultOnCheckout,
+                                    onToggleSaveToVault = { saveToVaultOnCheckout = it },
+                                    canSaveNow = canSaveTravelerVault,
+                                    onSaveNowToVault = {
+                                        onSaveTravelerVaultNow(
+                                            SavedTravelerProfile(
+                                                firstName = firstName,
+                                                lastName = lastName,
+                                                email = email,
+                                                phone = phone,
+                                                documentNumber = documentInfo.documentNumber,
+                                                birthDate = documentInfo.birthDate,
+                                                expiryDate = documentInfo.expiryDate,
+                                                frequentFlyerProgram = ffSelection.program.displayName,
+                                                frequentFlyerNumber = ffSelection.memberNumber,
+                                                autoCheckInEnabled = documentInfo.autoCheckInEnabled
+                                            )
+                                        )
+                                    },
+                                    onDeleteVaultProfile = {
+                                        onDeleteTravelerVault()
+                                        hasAppliedVaultProfile = false
+                                    }
+                                )
+                            }
+
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(18.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "Dados do Passageiro",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(
+                                                value = firstName,
+                                                onValueChange = { firstName = it },
+                                                label = { Text("Nome (conforme documento)") },
+                                                singleLine = true,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("passenger_first_name_input")
+                                            )
+                                            OutlinedTextField(
+                                                value = lastName,
+                                                onValueChange = { lastName = it },
+                                                label = { Text("Sobrenome") },
+                                                singleLine = true,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("passenger_last_name_input")
+                                            )
+                                        }
+                                        OutlinedTextField(
+                                            value = email,
+                                            onValueChange = { email = it },
+                                            label = { Text("E-mail para envio do E-Ticket") },
+                                            singleLine = true,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("passenger_email_input")
+                                        )
+                                        OutlinedTextField(
+                                            value = phone,
+                                            onValueChange = { phone = it },
+                                            label = { Text("Telefone Internacional (ex: +5511999999999 ou +351...)") },
+                                            placeholder = { Text("+5511999999999") },
+                                            singleLine = true,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("passenger_phone_input")
+                                        )
+                                    }
+                                }
+                            }
+
+                            item {
+                                PassengerDocumentSection(
+                                    documentInfo = documentInfo,
+                                    onUpdateDocumentInfo = { documentInfo = it },
+                                    flightDepartureDateIso = offer.departureIso.take(10)
+                                )
+                            }
+
+                            item {
+                                FrequentFlyerCheckoutCard(
+                                    selection = ffSelection,
+                                    totalFareEur = breakdown.grandTotalEur,
+                                    cabinClass = offer.cabinClass,
+                                    onUpdateSelection = { ffSelection = it }
+                                )
+                            }
+                        }
+                    }
+
+                    CheckoutWizardStep.PAYMENT_ISSUE -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            item {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = Color(0xFF065F46).copy(alpha = 0.22f),
+                                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.55f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("checkout_security_shield_banner")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = Color(0xFF34D399),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "Sessão Blindada PCI-DSS • Print/Gravação de Tela Bloqueados (FLAG_SECURE) • Anti-Duplicidade Ativo",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF6EE7B7)
+                                        )
+                                    }
+                                }
+                            }
+
+                            item {
+                                InteractiveCreditCardSection(
+                                    cardInput = cardInput,
+                                    onUpdateCardInput = { cardInput = it }
+                                )
+                            }
+
+                            item {
+                                CheckoutFinancialSummaryCard(
+                                    breakdown = breakdown,
+                                    markupConfig = markupConfig,
+                                    ancillaries = ancillaries
+                                )
+                            }
+
+                            item {
+                                if (!isFormReadyToPay && !isIssuing) {
+                                    Text(
+                                        text = "Certifique-se de ter preenchido os dados do passageiro (Etapa 3) e um cartão válido.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Barra Inferior Fixa com Preço Real + Botão "Continuar" / "Emitir"
+        Surface(
+            color = Color.White,
+            shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = String.format(Locale.GERMANY, "%.2f €", breakdown.grandTotalEur),
+                        fontSize = 23.sp,
+                        color = Color(0xFF1E293B),
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "Preço total por passageiro",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
+
+                if (currentStep != CheckoutWizardStep.PAYMENT_ISSUE) {
+                    Button(
+                        onClick = {
+                            currentStep = when (currentStep) {
+                                CheckoutWizardStep.TRIP_SUMMARY -> CheckoutWizardStep.EXTRAS_OPTIONS
+                                CheckoutWizardStep.EXTRAS_OPTIONS -> CheckoutWizardStep.PASSENGER_DATA
+                                CheckoutWizardStep.PASSENGER_DATA -> CheckoutWizardStep.PAYMENT_ISSUE
+                                CheckoutWizardStep.PAYMENT_ISSUE -> CheckoutWizardStep.PAYMENT_ISSUE
+                            }
+                        },
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = edreamsBlue,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .height(50.dp)
+                            .width(180.dp)
+                            .testTag("checkout_next_step_button")
+                    ) {
+                        Text(
+                            text = "Continuar",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            onPayAndIssueTicket(
+                                firstName,
+                                lastName,
+                                email,
+                                phone,
+                                documentInfo,
+                                cardInput,
+                                saveToVaultOnCheckout,
+                                ffSelection.program.displayName,
+                                ffSelection.memberNumber
+                            )
+                        },
+                        enabled = isFormReadyToPay,
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = edreamsBlue,
+                            contentColor = Color.White,
+                            disabledContainerColor = Color(0xFF94A3B8),
+                            disabledContentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .height(50.dp)
+                            .width(195.dp)
+                            .testTag("confirm_stripe_payment_button")
+                    ) {
+                        if (isIssuing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Confirmar & Emitir",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Etapa 1: "Resumo da sua viagem" — Layout limpo idêntico ao resumo da eDreams (sem banner de congelar preço):
+ * - Cartão branco limpo com cabeçalho "Ida" à esquerda e "🕒 7 h 50 min" à direita
+ * - Linha do tempo vertical com partida (16:55 • LIS Humberto Delgado, T1 • Lisboa, Portugal),
+ *   ícone da companhia aérea (TAP Portugal • TP35), pílulas arredondadas (🕒 7 h 50 min, 💺 Turista, ✈ 339),
+ *   chegada (21:45 • FOR Pinto Martins – Fortaleza Internacional • Fortaleza, Brasil) e "Bagagem de mão".
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EdreamsTripSummaryStepContent(
+    offer: EnrichedFlightOffer,
+    freezePriceEnabled: Boolean,
+    onToggleFreezePrice: () -> Unit,
+    onInspectAircraft: () -> Unit
+) {
+    val originPlace = remember(offer.originIata) {
+        PlaceAutocompleteCatalog.resolveByIata(offer.originIata)
+    }
+    val destPlace = remember(offer.destinationIata) {
+        PlaceAutocompleteCatalog.resolveByIata(offer.destinationIata)
+    }
+
+    val formattedShortDate = remember(offer.departureIso) {
+        runCatching {
+            val d = LocalDate.parse(offer.departureIso.take(10))
+            val fmt = DateTimeFormatter.ofPattern("EEE, dd MMM", Locale("pt", "PT"))
+            d.format(fmt).replace(".", "")
+        }.getOrDefault(offer.departureIso.take(10))
+    }
+
+    val cabinLabel = remember(offer.cabinClass) {
+        when (offer.cabinClass.lowercase()) {
+            "business" -> "Executiva"
+            "first" -> "Primeira Classe"
+            "premium_economy" -> "Premium Eco"
+            else -> "Turista"
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF4F7FB)),
+        contentPadding = PaddingValues(top = 18.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        // Cartão Branco Limpo "Ida"
         item {
             Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White,
+                shadowElevation = 3.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .testTag("edreams_trip_summary_card")
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    Text(
-                        text = "1. Escolha de Assento (100% Opcional)",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (!isPaidSeat) {
-                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(
-                                width = if (!isPaidSeat) 1.5.dp else 1.dp,
-                                color = if (!isPaidSeat) MaterialTheme.colorScheme.tertiary else Color.Transparent,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable { onSelectAutoFreeSeat() }
-                            .testTag("checkout_auto_free_seat_radio")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                RadioButton(
-                                    selected = !isPaidSeat,
-                                    onClick = onSelectAutoFreeSeat
-                                )
-                                Column {
-                                    Text(
-                                        text = "Assento Automático / Gratuito (Padrão)",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "A companhia aérea atribui o assento gratuitamente no check-in",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "€0.00",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isPaidSeat) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(
-                                width = if (isPaidSeat) 1.5.dp else 1.dp,
-                                color = if (isPaidSeat) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable { onInspectAircraftAndSeats() }
-                            .testTag("open_aircraft_seatmap_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                RadioButton(
-                                    selected = isPaidSeat,
-                                    onClick = onInspectAircraftAndSeats
-                                )
-                                Column {
-                                    Text(
-                                        text = if (isPaidSeat) {
-                                            "Assento Premium: ${ancillaries.seatDesignator} (${offer.aircraftSpec.fullName})"
-                                        } else {
-                                            "Escolher Assento Premium (Janela / Corredor)"
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Tarifa cia ${MarkupEngine.formatEur(seatNetBase)} + Margem serviço transparente ${MarkupEngine.formatEur(ANCILLARY_SERVICE_MARGIN_EUR)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "+${MarkupEngine.formatEur(markupConfig.seatSelectionFeeEur)}",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-
+                    // Cabeçalho "Ida" à esquerda e "🕒 7 h 50 min" à direita
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "2. Serviços Opcionais (Ancillaries)",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
+                            text = "Ida",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF334155)
                         )
-                        if (hasAnyAncillary) {
-                            TextButton(
-                                onClick = onClearAllAncillaries,
-                                modifier = Modifier.testTag("clear_all_ancillaries_button")
-                            ) {
-                                Text("Desmarcar Tudo")
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Checkbox(
-                                checked = ancillaries.includeExtraBaggage23Kg,
-                                onCheckedChange = onToggleExtraBag,
-                                modifier = Modifier.testTag("extra_bag_checkbox")
-                            )
-                            Column {
-                                Text(
-                                    text = "Bagagem Despachada 23kg (Opcional)",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Tarifa cia ${MarkupEngine.formatEur(bagNetBase)} + Margem serviço transparente ${MarkupEngine.formatEur(ANCILLARY_SERVICE_MARGIN_EUR)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Text(
-                            text = "+${MarkupEngine.formatEur(markupConfig.extraBaggageFeeEur)}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Checkbox(
-                                checked = ancillaries.includePriorityLounge,
-                                onCheckedChange = onTogglePriorityLounge,
-                                modifier = Modifier.testTag("priority_lounge_checkbox")
-                            )
-                            Text(
-                                text = "Embarque Prioritário & Fast Track (Opcional)",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                        Text(
-                            text = "+${MarkupEngine.formatEur(markupConfig.priorityBoardingFeeEur)}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-        }
-
-        // 2.1 INTERNET GLOBAL (Airalo eSIM Integration) com markup automático AguiaFly
-        item {
-            com.example.ui.components.AiraloEsimSelectorCard(
-                destinationIata = offer.destinationIata,
-                destinationCity = offer.destinationCity,
-                selectedPackage = ancillaries.selectedEsimPackage,
-                onSelectPackage = onSelectAiraloEsim,
-                isPostBookingConfirmation = false
-            )
-        }
-
-        // 2.2 ACESSO A SALAS VIP (Priority Pass / DragonPass API) para origem e conexões da rota
-        item {
-            com.example.ui.components.RouteVipLoungePassCard(
-                originIata = offer.originIata,
-                destinationIata = offer.destinationIata,
-                stopoverHubsSummary = offer.stopoverHubsSummary,
-                selectedLounges = ancillaries.selectedVipLounges,
-                onToggleLoungePass = onToggleVipLoungePass,
-                isConfirmedTripView = false
-            )
-        }
-
-        // 2.3 EXPERIÊNCIAS & TRANSFERS NO DESTINO (GetYourGuide / Viator API)
-        item {
-            com.example.ui.components.DestinationExperiencesSectionCard(
-                destinationIata = offer.destinationIata,
-                destinationCity = offer.destinationCity,
-                selectedExperiences = ancillaries.selectedExperiences,
-                onToggleExperience = onToggleDestinationExperience,
-                isPostPurchaseConfirmation = false
-            )
-        }
-
-        // 2.5 Cofre de Viajante Salvo (Auto-Preenchimento para Próximas Compras)
-        item {
-            SavedTravelerVaultCard(
-                savedProfile = savedTravelerProfile,
-                saveToVaultOnCheckout = saveToVaultOnCheckout,
-                onToggleSaveToVault = { saveToVaultOnCheckout = it },
-                canSaveNow = canSaveTravelerVault,
-                onSaveNowToVault = {
-                    onSaveTravelerVaultNow(
-                        SavedTravelerProfile(
-                            firstName = firstName,
-                            lastName = lastName,
-                            email = email,
-                            phone = phone,
-                            documentNumber = documentInfo.documentNumber,
-                            birthDate = documentInfo.birthDate,
-                            expiryDate = documentInfo.expiryDate,
-                            frequentFlyerProgram = ffSelection.program.displayName,
-                            frequentFlyerNumber = ffSelection.memberNumber,
-                            autoCheckInEnabled = documentInfo.autoCheckInEnabled
-                        )
-                    )
-                },
-                onDeleteVaultProfile = {
-                    onDeleteTravelerVault()
-                    hasAppliedVaultProfile = false
-                }
-            )
-        }
-
-        // 3. Dados Reais do Passageiro
-        item {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "3. Dados do Passageiro",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = firstName,
-                            onValueChange = { firstName = it },
-                            label = { Text("Nome (conforme documento)") },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("passenger_first_name_input")
-                        )
-                        OutlinedTextField(
-                            value = lastName,
-                            onValueChange = { lastName = it },
-                            label = { Text("Sobrenome") },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("passenger_last_name_input")
-                        )
-                    }
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = { Text("E-mail para envio do E-Ticket") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("passenger_email_input")
-                    )
-                    OutlinedTextField(
-                        value = phone,
-                        onValueChange = { phone = it },
-                        label = { Text("Telefone Internacional (ex: +5511999999999 ou +351...)") },
-                        placeholder = { Text("+5511999999999") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("passenger_phone_input")
-                    )
-                }
-            }
-        }
-
-        // 3.5 Documento de Identificação Real (Passaporte / Cartão de Cidadão / RG) & Check-in Automático
-        item {
-            PassengerDocumentSection(
-                documentInfo = documentInfo,
-                onUpdateDocumentInfo = { documentInfo = it },
-                flightDepartureDateIso = offer.departureIso.take(10)
-            )
-        }
-
-        // 3.8 Programa de Fidelidade & Passageiro Frequente (Milhas + AguiaFly Royal Club)
-        item {
-            FrequentFlyerCheckoutCard(
-                selection = ffSelection,
-                totalFareEur = breakdown.grandTotalEur,
-                cabinClass = offer.cabinClass,
-                onUpdateSelection = { ffSelection = it }
-            )
-        }
-
-        // 4. Formulário Interativo de Cartão de Crédito com Detecção Automática de Bandeira
-        item {
-            InteractiveCreditCardSection(
-                cardInput = cardInput,
-                onUpdateCardInput = { cardInput = it }
-            )
-        }
-
-        // 5. Resumo Financeiro Transparente (Preço Base + Taxa de Gestão Unificada €3.50 + 3.5% + Opcionais)
-        item {
-            CheckoutFinancialSummaryCard(
-                breakdown = breakdown,
-                markupConfig = markupConfig,
-                ancillaries = ancillaries
-            )
-        }
-
-        // 5.5 Selo de Pagamento Seguro Criptografado
-        item {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                border = BorderStroke(1.dp, Color(0xFF635BFF).copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF635BFF),
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Default.Lock,
+                                imageVector = Icons.Default.Schedule,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = Color(0xFF64748B),
                                 modifier = Modifier.size(16.dp)
                             )
+                            Text(
+                                text = offer.durationFormatted,
+                                fontSize = 14.sp,
+                                color = Color(0xFF64748B),
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
-                    Column {
-                        Text(
-                            text = "Pagamento Criptografado PCI-DSS Nível 1",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Seus dados de cartão são protegidos por criptografia bancária de ponta a ponta e emissão imediata de E-Ticket.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
 
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!isFormReadyToPay && !isIssuing) {
-                    Text(
-                        text = "Preencha telefone, documento oficial e os dados válidos do cartão para habilitar a emissão.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-                Button(
-                    onClick = {
-                        onPayAndIssueTicket(
-                            firstName,
-                            lastName,
-                            email,
-                            phone,
-                            documentInfo,
-                            cardInput,
-                            saveToVaultOnCheckout,
-                            ffSelection.program.displayName,
-                            ffSelection.memberNumber
-                        )
-                    },
-                    enabled = isFormReadyToPay,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .testTag("confirm_stripe_payment_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    if (isIssuing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(imageVector = Icons.Default.Lock, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Pagar ${MarkupEngine.formatEur(breakdown.grandTotalEur)} (${cardInput.brand.displayName}) & Emitir E-Ticket",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                    // Linha do Tempo Vertical (Horários à esquerda | Linha vertical com círculos | Aeroportos, Companhia e Pílulas à direita)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
+                    ) {
+                        // COLUNA ESQUERDA: Horário e Data de Partida (topo) e Chegada (base)
+                        Column(
+                            modifier = Modifier
+                                .width(78.dp)
+                                .fillMaxHeight(),
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = offer.departureTimeFormatted,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = formattedShortDate,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = offer.arrivalTimeFormatted,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = formattedShortDate,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+
+                        // COLUNA CENTRAL: Linha vertical com círculo vazado no topo e círculo preenchido na base
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 14.dp)
+                                .fillMaxHeight(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(9.dp)
+                                    .border(2.dp, Color(0xFFCBD5E1), CircleShape)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .width(1.5.dp)
+                                    .weight(1f)
+                                    .background(Color(0xFFE2E8F0))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(9.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFCBD5E1))
+                            )
+                            Spacer(modifier = Modifier.height(18.dp))
+                        }
+
+                        // COLUNA DIREITA: Aeroporto de Origem + Companhia Aérea e Pílulas + Aeroporto de Destino
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(18.dp)
+                        ) {
+                            // Origem: ex "LIS (Humberto Delgado, T1)" / "Lisboa (Portugal)"
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "${offer.originIata} (${originPlace.airportName}, T1)",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = "${offer.originCity} (${originPlace.countryName})",
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+
+                            // Bloco Central: Ícone da Companhia + Nome • Voo + Pílulas (🕒 7 h 50 min | 💺 Turista | ✈ 339)
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    AirlineLogoBadge(
+                                        airlineIata = offer.airlineIata,
+                                        airlineName = offer.airlineName,
+                                        size = 30.dp
+                                    )
+                                    Text(
+                                        text = offer.airlineName,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF1E293B)
+                                    )
+                                    Text(
+                                        text = "•",
+                                        fontSize = 15.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                    Text(
+                                        text = offer.flightNumber,
+                                        fontSize = 15.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Pílula 1: Duração (🕒 7 h 50 min)
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFFF1F5F9)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Schedule,
+                                                contentDescription = null,
+                                                tint = Color(0xFF475569),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = offer.durationFormatted,
+                                                fontSize = 13.sp,
+                                                color = Color(0xFF475569),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+
+                                    // Pílula 2: Cabine (💺 Turista / Executiva)
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFFF1F5F9)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.AirlineSeatReclineNormal,
+                                                contentDescription = null,
+                                                tint = Color(0xFF475569),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = cabinLabel,
+                                                fontSize = 13.sp,
+                                                color = Color(0xFF475569),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+
+                                    // Pílula 3: Código da Aeronave (✈ 339) — Clicável para ver Raio-X / Mapa de Assentos
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFFF1F5F9),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50))
+                                            .clickable { onInspectAircraft() }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Flight,
+                                                contentDescription = "Inspecionar aeronave",
+                                                tint = Color(0xFF475569),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = offer.aircraftSpec.iataCode,
+                                                fontSize = 13.sp,
+                                                color = Color(0xFF475569),
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Destino: ex "FOR (Pinto Martins – Fortaleza Internacional)" / "Fortaleza (Brasil)"
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "${offer.destinationIata} (${destPlace.airportName} – ${offer.destinationCity} Internacional)",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = "${offer.destinationCity} (${destPlace.countryName})",
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
                     }
+
+                    // Rodapé interno do cartão: "Bagagem de mão" (igual a "Equipaje de mano" da imagem 1)
+                    Text(
+                        text = "Bagagem de mão incluída",
+                        fontSize = 14.sp,
+                        color = Color(0xFF64748B),
+                        fontWeight = FontWeight.Normal,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             }
         }
