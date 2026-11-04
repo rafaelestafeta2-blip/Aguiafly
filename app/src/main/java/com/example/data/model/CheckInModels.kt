@@ -5,15 +5,35 @@ enum class TravelDocType(val label: String, val shortCode: String) {
     PASSPORT("Passaporte Internacional", "PASS")
 }
 
+data class IssuingCountryOption(
+    val isoCode: String,
+    val label: String
+)
+
+val PASSPORT_ISSUING_COUNTRIES = listOf(
+    IssuingCountryOption("PT", "🇵🇹 Portugal (PT)"),
+    IssuingCountryOption("BR", "🇧🇷 Brasil (BR)"),
+    IssuingCountryOption("ES", "🇪🇸 Espanha (ES)"),
+    IssuingCountryOption("FR", "🇫🇷 França (FR)"),
+    IssuingCountryOption("IT", "🇮🇹 Itália (IT)"),
+    IssuingCountryOption("DE", "🇩🇪 Alemanha (DE)"),
+    IssuingCountryOption("GB", "🇬🇧 Reino Unido (GB)"),
+    IssuingCountryOption("US", "🇺🇸 Estados Unidos (US)"),
+    IssuingCountryOption("CH", "🇨🇭 Suíça (CH)"),
+    IssuingCountryOption("AO", "🇦🇴 Angola (AO)")
+)
+
 /**
  * Dados do documento de identificação (APIS) recolhidos durante a compra
- * para permitir o agendamento e execução do Check-in Automático.
+ * para emissão IATA/GDS (`identity_documents`) e agendamento do Check-in Automático.
  */
 data class PassengerDocumentInfo(
     val docType: TravelDocType = TravelDocType.CITIZEN_CARD,
     val documentNumber: String = "",
     val birthDate: String = "1992-05-15",
     val expiryDate: String = "2031-08-20",
+    val issuingCountryCode: String = "PT",
+    val gender: String = "m",
     val taxIdNifCpf: String = "",
     val autoCheckInEnabled: Boolean = true
 )

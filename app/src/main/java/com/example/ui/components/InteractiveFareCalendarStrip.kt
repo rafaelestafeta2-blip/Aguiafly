@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -240,8 +242,9 @@ fun InteractiveFareCalendarSection(
 /**
  * Modal de tela cheia idêntico à captura de tela "¿Cuándo?" da eDreams:
  * Abre SOMENTE quando o cliente clica no campo de data.
- * Mostra os meses em sequência vertical, preços sob cada dia calibrados pela tarifa real da busca,
- * dias mais baratos em verde (#159A74), dia selecionado em azul (#005AA3) e botão "Continuar".
+ * Mostra os meses em sequência vertical, preços sob cada dia sincronizados 100% com a busca da rota,
+ * dias mais baratos em verde (#159A74), dia selecionado em azul (#005AA3).
+ * Ao tocar em qualquer dia, seleciona e aplica imediatamente a nova data de partida/volta.
  */
 @Composable
 fun EdreamsMonthlyPriceCalendarDialog(
@@ -258,18 +261,14 @@ fun EdreamsMonthlyPriceCalendarDialog(
     onDismiss: () -> Unit,
     onConfirmDate: (String) -> Unit
 ) {
-    var tempSelectedDateIso by remember { mutableStateOf(initialSelectedDateIso) }
+    var tempSelectedDateIso by remember(initialSelectedDateIso) { mutableStateOf(initialSelectedDateIso) }
     val baseDate = remember(initialSelectedDateIso) {
         runCatching { LocalDate.parse(initialSelectedDateIso.take(10)) }
-            .getOrDefault(LocalDate.of(2026, 12, 30))
+            .getOrDefault(LocalDate.of(2026, 11, 15))
     }
     val baseYearMonth = remember(baseDate) { YearMonth.of(baseDate.year, baseDate.monthValue) }
     val monthsToRender = remember(baseYearMonth) {
-        listOf(
-            baseYearMonth,
-            baseYearMonth.plusMonths(1),
-            baseYearMonth.plusMonths(2)
-        )
+        (0..5).map { offset -> baseYearMonth.plusMonths(offset.toLong()) }
     }
 
     Dialog(
@@ -285,7 +284,9 @@ fun EdreamsMonthlyPriceCalendarDialog(
                 Surface(
                     color = Color.White,
                     shadowElevation = 3.dp,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
                 ) {
                     Row(
                         modifier = Modifier
@@ -295,12 +296,20 @@ fun EdreamsMonthlyPriceCalendarDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Spacer(modifier = Modifier.width(32.dp))
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B)
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E293B)
+                            )
+                            Text(
+                                text = "Rota $originIata ➔ $destinationIata • Toque num dia para aplicar",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF64748B),
+                                fontSize = 11.sp
+                            )
+                        }
                         IconButton(
                             onClick = onDismiss,
                             modifier = Modifier
@@ -316,7 +325,7 @@ fun EdreamsMonthlyPriceCalendarDialog(
                     }
                 }
 
-                // Lista rolável com os meses (ex: Novembro '26, Dezembro '26, Janeiro '27)
+                // Lista rolável com os meses (6 meses a partir do mês atual da pesquisa)
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f)
@@ -379,6 +388,7 @@ fun EdreamsMonthlyPriceCalendarDialog(
                                         selectedCurrency = selectedCurrency,
                                         onSelectDay = { pickedIso ->
                                             tempSelectedDateIso = pickedIso
+                                            onConfirmDate(pickedIso)
                                         }
                                     )
 
@@ -394,7 +404,9 @@ fun EdreamsMonthlyPriceCalendarDialog(
                 Surface(
                     color = Color.White,
                     shadowElevation = 10.dp,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
                 ) {
                     Row(
                         modifier = Modifier

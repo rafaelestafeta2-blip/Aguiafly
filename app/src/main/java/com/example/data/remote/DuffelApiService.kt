@@ -7,6 +7,7 @@ import com.example.data.model.DuffelOrderCancellationResponseWrapper
 import com.example.data.model.DuffelOrderCreateEnvelope
 import com.example.data.model.DuffelOrderResponseWrapper
 import com.example.data.model.DuffelPlacesResponseWrapper
+import com.example.data.model.DuffelSingleOfferResponseWrapper
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
@@ -28,6 +29,21 @@ interface DuffelApiService {
         @Query("return_offers") returnOffers: Boolean = true,
         @Body body: DuffelOfferRequestEnvelope
     ): DuffelOfferResponseWrapper
+
+    /**
+     * 1. Re-validação da Oferta (Pre-Checkout) — GET /air/offers/:id
+     * Consulta a oferta na Duffel antes de iniciar qualquer transação financeira na Stripe,
+     * verificando `expires_at` e `total_amount`.
+     */
+    @Headers(
+        "Duffel-Version: v2",
+        "Accept: application/json"
+    )
+    @GET("air/offers/{offerId}")
+    suspend fun getOfferById(
+        @Header("Authorization") bearerToken: String,
+        @Path("offerId") offerId: String
+    ): DuffelSingleOfferResponseWrapper
 
     @Headers(
         "Duffel-Version: v2",

@@ -225,11 +225,19 @@ fun CheckoutScreen(
         )
     }
 
+    val birthDateAssessment = remember(documentInfo.birthDate, offer.departureIso) {
+        com.example.domain.security.PassportSecurityValidator.validateBirthDate(
+            birthDateIso = documentInfo.birthDate,
+            referenceFlightDateIso = offer.departureIso.take(10)
+        )
+    }
+
     val canSaveTravelerVault = firstName.isNotBlank() &&
         lastName.isNotBlank() &&
         email.isNotBlank() &&
         phone.trim().length >= 5 &&
         documentInfo.documentNumber.trim().length >= 4 &&
+        birthDateAssessment.canProceedToIssueTicket &&
         passportExpiryAssessment.canProceedToIssueTicket
 
     val isFormReadyToPay = !isIssuing &&
@@ -684,6 +692,36 @@ fun CheckoutScreen(
                                                     .testTag("passenger_last_name_input")
                                             )
                                         }
+                                        val iataGivenPreview = com.example.domain.security.PassportSecurityValidator.sanitizeIataGdsName(firstName)
+                                        val iataFamilyPreview = com.example.domain.security.PassportSecurityValidator.sanitizeIataGdsName(lastName)
+                                        if (iataGivenPreview.isNotBlank() || iataFamilyPreview.isNotBlank()) {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("iata_gds_sanitized_name_badge")
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "Padrão Estrito IATA/GDS (Sem acentos/cedilhas):",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                    Text(
+                                                        text = "${iataFamilyPreview.ifBlank { "SOBRENOME" }}/${iataGivenPreview.ifBlank { "NOME" }}",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
+                                        }
                                         OutlinedTextField(
                                             value = email,
                                             onValueChange = { email = it },
@@ -741,22 +779,32 @@ fun CheckoutScreen(
                                         .fillMaxWidth()
                                         .testTag("checkout_security_shield_banner")
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = null,
-                                            tint = Color(0xFF34D399),
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Lock,
+                                                contentDescription = null,
+                                                tint = Color(0xFF34D399),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = "Fluxo Atômico Stripe (capture_method: manual) + Duffel NDC",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF6EE7B7)
+                                            )
+                                        }
                                         Text(
-                                            text = "Sessão Blindada PCI-DSS • Print/Gravação de Tela Bloqueados (FLAG_SECURE) • Anti-Duplicidade Ativo",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF6EE7B7)
+                                            text = "1. Re-valida tarifa/expiração na Duffel (GET /air/offers/:id) • 2. Pré-autoriza cartão na Stripe sem captura imediata • 3. Emite PNR/E-Ticket (POST /air/orders) e captura apenas no sucesso (ou liberta limite na hora via paymentIntents.cancel).",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFFA7F3D0)
                                         )
                                     }
                                 }
@@ -938,6 +986,10 @@ private fun EdreamsTripSummaryStepContent(
         }
     }
 
+    val legs = remember(offer, formattedShortDate) {
+        offer.resolvedSegmentLegs(formattedShortDate)
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -945,7 +997,7 @@ private fun EdreamsTripSummaryStepContent(
         contentPadding = PaddingValues(top = 18.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        // Cartão Branco Limpo "Ida"
+        // Cartão Branco Limpo "Ida" (com suporte completo a Voo Direto e Voos com 1 ou 2 Escalas)
         item {
             Surface(
                 shape = RoundedCornerShape(14.dp),
@@ -960,20 +1012,47 @@ private fun EdreamsTripSummaryStepContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 22.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
-                    // Cabeçalho "Ida" à esquerda e "🕒 7 h 50 min" à direita
+                    // Cabeçalho "Ida" à esquerda e Duração Total + Badge Direto/Escalas à direita
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Ida",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF334155)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "Ida",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF334155)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (offer.isDirectFlight) {
+                                    Color(0xFF159A74).copy(alpha = 0.12f)
+                                } else {
+                                    Color(0xFFF59E0B).copy(alpha = 0.16f)
+                                }
+                            ) {
+                                Text(
+                                    text = if (offer.isDirectFlight) {
+                                        "Directo"
+                                    } else if (offer.effectiveStopsCount == 1) {
+                                        "1 escala ${offer.stopoverHubsSummary}".trim()
+                                    } else {
+                                        "${offer.effectiveStopsCount} escalas ${offer.stopoverHubsSummary}".trim()
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (offer.isDirectFlight) Color(0xFF159A74) else Color(0xFFB45309),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -993,237 +1072,343 @@ private fun EdreamsTripSummaryStepContent(
                         }
                     }
 
-                    // Linha do Tempo Vertical (Horários à esquerda | Linha vertical com círculos | Aeroportos, Companhia e Pílulas à direita)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Min)
-                    ) {
-                        // COLUNA ESQUERDA: Horário e Data de Partida (topo) e Chegada (base)
-                        Column(
-                            modifier = Modifier
-                                .width(78.dp)
-                                .fillMaxHeight(),
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = offer.departureTimeFormatted,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E293B)
-                                )
-                                Text(
-                                    text = formattedShortDate,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = offer.arrivalTimeFormatted,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E293B)
-                                )
-                                Text(
-                                    text = formattedShortDate,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
+                    // Renderiza cada trecho (perna do voo) e as conexões/escalas intermediárias
+                    legs.forEachIndexed { legIdx, leg ->
+                        val legOrigPlace = remember(leg.originIata) {
+                            PlaceAutocompleteCatalog.resolveByIata(leg.originIata)
+                        }
+                        val legDestPlace = remember(leg.destinationIata) {
+                            PlaceAutocompleteCatalog.resolveByIata(leg.destinationIata)
                         }
 
-                        // COLUNA CENTRAL: Linha vertical com círculo vazado no topo e círculo preenchido na base
-                        Column(
+                        Row(
                             modifier = Modifier
-                                .padding(horizontal = 14.dp)
-                                .fillMaxHeight(),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
                         ) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Box(
+                            // COLUNA ESQUERDA: Horário e Data de Partida (topo) e Chegada do Trecho (base)
+                            Column(
                                 modifier = Modifier
-                                    .size(9.dp)
-                                    .border(2.dp, Color(0xFFCBD5E1), CircleShape)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .width(1.5.dp)
-                                    .weight(1f)
-                                    .background(Color(0xFFE2E8F0))
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(9.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFCBD5E1))
-                            )
-                            Spacer(modifier = Modifier.height(18.dp))
-                        }
-
-                        // COLUNA DIREITA: Aeroporto de Origem + Companhia Aérea e Pílulas + Aeroporto de Destino
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(18.dp)
-                        ) {
-                            // Origem: ex "LIS (Humberto Delgado, T1)" / "Lisboa (Portugal)"
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = "${offer.originIata} (${originPlace.airportName}, T1)",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E293B)
-                                )
-                                Text(
-                                    text = "${offer.originCity} (${originPlace.countryName})",
-                                    fontSize = 14.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-
-                            // Bloco Central: Ícone da Companhia + Nome • Voo + Pílulas (🕒 7 h 50 min | 💺 Turista | ✈ 339)
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    AirlineLogoBadge(
-                                        airlineIata = offer.airlineIata,
-                                        airlineName = offer.airlineName,
-                                        size = 30.dp
-                                    )
+                                    .width(78.dp)
+                                    .fillMaxHeight(),
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(horizontalAlignment = Alignment.End) {
                                     Text(
-                                        text = offer.airlineName,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        text = leg.departureTimeFormatted,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
                                         color = Color(0xFF1E293B)
                                     )
                                     Text(
-                                        text = "•",
-                                        fontSize = 15.sp,
-                                        color = Color(0xFF64748B)
-                                    )
-                                    Text(
-                                        text = offer.flightNumber,
-                                        fontSize = 15.sp,
+                                        text = leg.departureDateFormatted,
+                                        fontSize = 12.sp,
                                         color = Color(0xFF64748B)
                                     )
                                 }
 
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    // Pílula 1: Duração (🕒 7 h 50 min)
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = Color(0xFFF1F5F9)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Schedule,
-                                                contentDescription = null,
-                                                tint = Color(0xFF475569),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Text(
-                                                text = offer.durationFormatted,
-                                                fontSize = 13.sp,
-                                                color = Color(0xFF475569),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-
-                                    // Pílula 2: Cabine (💺 Turista / Executiva)
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = Color(0xFFF1F5F9)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.AirlineSeatReclineNormal,
-                                                contentDescription = null,
-                                                tint = Color(0xFF475569),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Text(
-                                                text = cabinLabel,
-                                                fontSize = 13.sp,
-                                                color = Color(0xFF475569),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-
-                                    // Pílula 3: Código da Aeronave (✈ 339) — Clicável para ver Raio-X / Mapa de Assentos
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = Color(0xFFF1F5F9),
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(50))
-                                            .clickable { onInspectAircraft() }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Flight,
-                                                contentDescription = "Inspecionar aeronave",
-                                                tint = Color(0xFF475569),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Text(
-                                                text = offer.aircraftSpec.iataCode,
-                                                fontSize = 13.sp,
-                                                color = Color(0xFF475569),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = leg.arrivalTimeFormatted,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E293B)
+                                    )
+                                    Text(
+                                        text = leg.arrivalDateFormatted,
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF64748B)
+                                    )
                                 }
                             }
 
-                            // Destino: ex "FOR (Pinto Martins – Fortaleza Internacional)" / "Fortaleza (Brasil)"
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = "${offer.destinationIata} (${destPlace.airportName} – ${offer.destinationCity} Internacional)",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E293B)
+                            // COLUNA CENTRAL: Linha vertical com círculo vazado no topo e círculo preenchido na base
+                            Column(
+                                modifier = Modifier
+                                    .padding(horizontal = 14.dp)
+                                    .fillMaxHeight(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(9.dp)
+                                        .border(2.dp, Color(0xFFCBD5E1), CircleShape)
                                 )
-                                Text(
-                                    text = "${offer.destinationCity} (${destPlace.countryName})",
-                                    fontSize = 14.sp,
-                                    color = Color(0xFF64748B)
+                                Box(
+                                    modifier = Modifier
+                                        .width(1.5.dp)
+                                        .weight(1f)
+                                        .background(Color(0xFFE2E8F0))
                                 )
+                                Box(
+                                    modifier = Modifier
+                                        .size(9.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (legIdx < legs.lastIndex) Color(0xFFF59E0B) else Color(0xFFCBD5E1)
+                                        )
+                                )
+                                Spacer(modifier = Modifier.height(18.dp))
+                            }
+
+                            // COLUNA DIREITA: Aeroporto de Partida do Trecho + Companhia e Pílulas + Aeroporto de Chegada do Trecho
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    if (legs.size > 1) {
+                                        Text(
+                                            text = "TRECHO ${legIdx + 1} DE ${legs.size}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFF005AA3)
+                                        )
+                                    }
+                                    Text(
+                                        text = "${leg.originIata} (${leg.originAirportName}, T1)",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E293B)
+                                    )
+                                    Text(
+                                        text = "${leg.originCity} (${legOrigPlace.countryName})",
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+
+                                // Bloco Central: Ícone da Companhia + Nome • Voo + Pílulas
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        AirlineLogoBadge(
+                                            airlineIata = leg.airlineIata,
+                                            airlineName = leg.airlineName,
+                                            size = 30.dp
+                                        )
+                                        Text(
+                                            text = leg.airlineName,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color(0xFF1E293B)
+                                        )
+                                        Text(
+                                            text = "•",
+                                            fontSize = 15.sp,
+                                            color = Color(0xFF64748B)
+                                        )
+                                        Text(
+                                            text = leg.flightNumber,
+                                            fontSize = 15.sp,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
+
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // Pílula 1: Duração do Trecho
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = Color(0xFFF1F5F9)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Schedule,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF475569),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = leg.durationFormatted,
+                                                    fontSize = 13.sp,
+                                                    color = Color(0xFF475569),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+
+                                        // Pílula 2: Cabine do Segmento
+                                        val segCabinLabel = when (leg.cabinClass.lowercase()) {
+                                            "business" -> "Executiva"
+                                            "first" -> "Primeira Classe"
+                                            "premium_economy" -> "Premium Economy"
+                                            else -> cabinLabel
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = Color(0xFFF1F5F9)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AirlineSeatReclineNormal,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF475569),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = segCabinLabel,
+                                                    fontSize = 13.sp,
+                                                    color = Color(0xFF475569),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+
+                                        // Pílula 3: Código da Aeronave
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = Color(0xFFF1F5F9),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(50))
+                                                .clickable { onInspectAircraft() }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Flight,
+                                                    contentDescription = "Inspecionar aeronave",
+                                                    tint = Color(0xFF475569),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = leg.aircraftIataCode,
+                                                    fontSize = 13.sp,
+                                                    color = Color(0xFF475569),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Chegada deste Trecho (Aeroporto de Escala ou Destino Final)
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "${leg.destinationIata} (${leg.destinationAirportName})",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E293B)
+                                    )
+                                    Text(
+                                        text = "${leg.destinationCity} (${legDestPlace.countryName})",
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Se houver escala após este trecho, exibe o bloco detalhado de conexão estilo eDreams!
+                        if (legIdx < legs.lastIndex && leg.layoverMinutesAfterSegment > 0) {
+                            val layoverHours = leg.layoverMinutesAfterSegment / 60
+                            val layoverMins = leg.layoverMinutesAfterSegment % 60
+                            val layoverFormatted = when {
+                                layoverHours > 0 && layoverMins > 0 -> "${layoverHours} h ${layoverMins} min"
+                                layoverHours > 0 -> "${layoverHours} h"
+                                else -> "${layoverMins} min"
+                            }
+                            val hasCritical = leg.isCriticalLayover || leg.airportChangeAfterSegment
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (hasCritical) Color(0xFFFEF2F2) else Color(0xFFFFFBEB),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (hasCritical) Color(0xFFFECACA) else Color(0xFFFDE68A)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("stopover_connection_box_${leg.destinationIata}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = null,
+                                        tint = if (hasCritical) Color(0xFFDC2626) else Color(0xFFD97706),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text(
+                                            text = "Escala em ${leg.destinationCity} (${leg.destinationIata}) • Espera de $layoverFormatted",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (hasCritical) Color(0xFF991B1B) else Color(0xFF92400E)
+                                        )
+                                        if (leg.airportChangeAfterSegment && leg.nextDepartureAirportIata.isNotBlank()) {
+                                            Text(
+                                                text = "⚠️ Troca de aeroporto na conexão: desembarque em ${leg.destinationIata} e embarque em ${leg.nextDepartureAirportIata}",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFB91C1C)
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "Conexão no ${leg.destinationAirportName} • Bagagem transferida até ${offer.destinationCity} (${offer.destinationIata})",
+                                                fontSize = 12.sp,
+                                                color = Color(0xFFB45309)
+                                            )
+                                        }
+                                        if (!leg.criticalLayoverAlertMessage.isNullOrBlank()) {
+                                            Text(
+                                                text = leg.criticalLayoverAlertMessage,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFB91C1C)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
 
-                    // Rodapé interno do cartão: "Bagagem de mão" (igual a "Equipaje de mano" da imagem 1)
-                    Text(
-                        text = "Bagagem de mão incluída",
-                        fontSize = 14.sp,
-                        color = Color(0xFF64748B),
-                        fontWeight = FontWeight.Normal,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                    HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                    // Rodapé interno do cartão: Franquia de Bagagem Separada (Mão vs Despachada)
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(top = 2.dp)
+                    ) {
+                        Text(
+                            text = "Bagagem de Mão (Carry-on): ${offer.carryOnBaggageAllowance}",
+                            fontSize = 13.sp,
+                            color = Color(0xFF334155),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Bagagem Despachada (Checked): ${offer.checkedBaggageAllowance}",
+                            fontSize = 13.sp,
+                            color = Color(0xFF64748B),
+                            fontWeight = FontWeight.Normal
+                        )
+                    }
                 }
             }
         }
     }
 }
+

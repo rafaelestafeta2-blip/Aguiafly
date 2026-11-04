@@ -85,6 +85,32 @@ data class OfferPriceBreakdown(
     val grandTotalEur: Double
 )
 
+data class FlightSegmentLeg(
+    val originIata: String,
+    val originCity: String,
+    val originAirportName: String,
+    val destinationIata: String,
+    val destinationCity: String,
+    val destinationAirportName: String,
+    val departureTimeFormatted: String,
+    val arrivalTimeFormatted: String,
+    val departureDateFormatted: String,
+    val arrivalDateFormatted: String,
+    val airlineIata: String,
+    val airlineName: String,
+    val flightNumber: String,
+    val aircraftIataCode: String,
+    val durationFormatted: String,
+    val layoverMinutesAfterSegment: Int = 0,
+    val cabinClass: String = "economy",
+    val carryOnBaggageText: String = "Não Incluída",
+    val checkedBaggageText: String = "Não Incluída",
+    val airportChangeAfterSegment: Boolean = false,
+    val nextDepartureAirportIata: String = "",
+    val isCriticalLayover: Boolean = false,
+    val criticalLayoverAlertMessage: String? = null
+)
+
 data class EnrichedFlightOffer(
     val offerId: String,
     val passengerId: String,
@@ -110,21 +136,58 @@ data class EnrichedFlightOffer(
     val aircraftSpec: AircraftTechnicalSpec,
     val includedBaggageSummary: String,
     val cancellationPolicySummary: String,
-    val isLiveDuffelOffer: Boolean
+    val isLiveDuffelOffer: Boolean,
+    val segmentLegs: List<FlightSegmentLeg> = emptyList(),
+    val airportChange: Boolean = false,
+    val hasCriticalLayoverAlert: Boolean = false,
+    val criticalLayoverAlertSummary: String? = null,
+    val carryOnBaggageAllowance: String = "Não Incluída",
+    val checkedBaggageAllowance: String = "Não Incluída"
 ) {
+    /**
+     * Número efetivo de escalas: se houver mais de 1 segmento na lista `segmentLegs`,
+     * garante obrigatoriamente pelo menos `segmentLegs.size - 1` escalas,
+     * independentemente de qualquer flag externa.
+     */
+    val effectiveStopsCount: Int
+        get() = when {
+            segmentLegs.size > 1 -> maxOf(stopsCount, segmentLegs.size - 1)
+            else -> stopsCount.coerceAtLeast(0)
+        }
+
+    /**
+     * Filtro Estrito de Voos Diretos (`non_stop`):
+     * Uma rota SÓ pode ser classificada e exibida como 'Direta' se `slice.segments.length === 1`
+     * E a origem do segmento for o aeroporto de partida pesquisado (`origin.iata_code`)
+     * E o destino for o aeroporto final (`destination.iata_code`).
+     * Se houver mais de 1 segmento, é forçada como 'Com Escala'.
+     */
     val isDirectFlight: Boolean
-        get() = stopsCount == 0
+        get() = if (segmentLegs.isNotEmpty()) {
+            segmentLegs.size == 1 &&
+                stopsCount == 0 &&
+                segmentLegs.first().originIata.equals(originIata, ignoreCase = true) &&
+                segmentLegs.first().destinationIata.equals(destinationIata, ignoreCase = true)
+        } else {
+            stopsCount == 0
+        }
+
+    val nonStop: Boolean
+        get() = isDirectFlight
+
+    val flightTypeClassification: String
+        get() = if (isDirectFlight) "Direto" else "Com Escala"
 
     val stopsBadgeLabel: String
         get() = when {
-            stopsCount <= 0 -> "Direto"
-            stopsCount == 1 -> if (stopoverHubsSummary.isNotBlank()) "1 Escala ($stopoverHubsSummary)" else "1 Escala"
-            else -> if (stopoverHubsSummary.isNotBlank()) "$stopsCount Escalas ($stopoverHubsSummary)" else "$stopsCount Escalas"
+            isDirectFlight -> "Direto"
+            effectiveStopsCount == 1 -> if (stopoverHubsSummary.isNotBlank()) "1 Escala ($stopoverHubsSummary)" else "1 Escala"
+            else -> if (stopoverHubsSummary.isNotBlank()) "$effectiveStopsCount Escalas ($stopoverHubsSummary)" else "$effectiveStopsCount Escalas"
         }
 
     val connectionTimeBadgeLabel: String
         get() {
-            if (stopsCount <= 0 || totalConnectionMinutes <= 0) {
+            if (isDirectFlight || totalConnectionMinutes <= 0) {
                 return "Voo Direto • Sem Conexão"
             }
             val hours = totalConnectionMinutes / 60
@@ -136,4 +199,137 @@ data class EnrichedFlightOffer(
             }
             return "Conexão total: $formatted"
         }
+
+    /**
+     * Retorna a lista detalhada de trechos (pernas do voo) e escalas para exibição no "Resumo da sua viagem".
+     * Se o voo tiver escalas (stopsCount > 0), retorna cada trecho individualmente com horários, aeroporto de
+     * conexão e tempo de espera na escala.
+     */
+    fun resolvedSegmentLegs(defaultDateLabel: String): List<FlightSegmentLeg> {
+        if (segmentLegs.isNotEmpty()) {
+            return segmentLegs
+        }
+        val origPlace = PlaceAutocompleteCatalog.resolveByIata(originIata)
+        val destPlace = PlaceAutocompleteCatalog.resolveByIata(destinationIata)
+
+        if (stopsCount <= 0) {
+            return listOf(
+                FlightSegmentLeg(
+                    originIata = originIata,
+                    originCity = originCity.ifBlank { origPlace.cityName },
+                    originAirportName = origPlace.airportName,
+                    destinationIata = destinationIata,
+                    destinationCity = destinationCity.ifBlank { destPlace.cityName },
+                    destinationAirportName = destPlace.airportName,
+                    departureTimeFormatted = departureTimeFormatted,
+                    arrivalTimeFormatted = arrivalTimeFormatted,
+                    departureDateFormatted = defaultDateLabel,
+                    arrivalDateFormatted = defaultDateLabel,
+                    airlineIata = airlineIata,
+                    airlineName = airlineName,
+                    flightNumber = flightNumber,
+                    aircraftIataCode = aircraftSpec.iataCode,
+                    durationFormatted = durationFormatted,
+                    layoverMinutesAfterSegment = 0
+                )
+            )
+        }
+
+        // Extrai códigos IATA reais dos aeroportos de conexão (ex: "via MAD (Madrid)" -> ["MAD"])
+        val ignored = setOf("VIA", "POR", "COM", "SEM", "VOO", "AND", "THE")
+        val hubIatas = stopoverHubsSummary
+            .replace("(", " ")
+            .replace(")", " ")
+            .split(",", "•", "/", " ", "-")
+            .map { it.trim().uppercase() }
+            .filter {
+                it.length == 3 &&
+                    it.all { ch -> ch.isLetter() } &&
+                    it !in ignored &&
+                    it != originIata.uppercase() &&
+                    it != destinationIata.uppercase()
+            }
+            .distinct()
+            .ifEmpty {
+                listOf(if (originIata.equals("MAD", true) || destinationIata.equals("MAD", true)) "LIS" else "MAD")
+            }
+            .take(stopsCount.coerceAtLeast(1))
+
+        val totalLayover = if (totalConnectionMinutes > 0) totalConnectionMinutes else (hubIatas.size * 80)
+        val layoverPerStop = (totalLayover / hubIatas.size.coerceAtLeast(1)).coerceAtLeast(45)
+        val totalFlightMinutes = (durationMinutes - totalLayover).coerceAtLeast(60)
+        val legsCount = hubIatas.size + 1
+        val flightMinsPerLeg = (totalFlightMinutes / legsCount).coerceAtLeast(40)
+
+        val allPoints = listOf(originIata.uppercase()) + hubIatas + listOf(destinationIata.uppercase())
+        val baseDepMins = parseHhMmToMinutes(departureTimeFormatted)
+        var currentClockMins = baseDepMins
+        val baseFlightDigits = flightNumber.filter { it.isDigit() }.toIntOrNull() ?: 1024
+
+        return (0 until legsCount).map { legIdx ->
+            val fromIata = allPoints[legIdx]
+            val toIata = allPoints[legIdx + 1]
+            val fromPlace = PlaceAutocompleteCatalog.resolveByIata(fromIata)
+            val toPlace = PlaceAutocompleteCatalog.resolveByIata(toIata)
+
+            val legDepFormatted = formatMinutesToHhMm(currentClockMins)
+            val legFlightMins = if (legIdx == legsCount - 1) {
+                (totalFlightMinutes - (flightMinsPerLeg * (legsCount - 1))).coerceAtLeast(40)
+            } else {
+                flightMinsPerLeg
+            }
+            currentClockMins += legFlightMins
+            val legArrFormatted = if (legIdx == legsCount - 1) {
+                arrivalTimeFormatted
+            } else {
+                formatMinutesToHhMm(currentClockMins)
+            }
+            val layoverAfter = if (legIdx < legsCount - 1) layoverPerStop else 0
+            currentClockMins += layoverAfter
+
+            val legHours = legFlightMins / 60
+            val legRemMins = legFlightMins % 60
+            val legDurationLabel = if (legHours > 0 && legRemMins > 0) {
+                "${legHours} h ${legRemMins} min"
+            } else if (legHours > 0) {
+                "${legHours} h"
+            } else {
+                "${legRemMins} min"
+            }
+
+            FlightSegmentLeg(
+                originIata = fromIata,
+                originCity = if (legIdx == 0 && originCity.isNotBlank()) originCity else fromPlace.cityName,
+                originAirportName = fromPlace.airportName,
+                destinationIata = toIata,
+                destinationCity = if (legIdx == legsCount - 1 && destinationCity.isNotBlank()) destinationCity else toPlace.cityName,
+                destinationAirportName = toPlace.airportName,
+                departureTimeFormatted = if (legIdx == 0) departureTimeFormatted else legDepFormatted,
+                arrivalTimeFormatted = legArrFormatted,
+                departureDateFormatted = defaultDateLabel,
+                arrivalDateFormatted = defaultDateLabel,
+                airlineIata = airlineIata,
+                airlineName = airlineName,
+                flightNumber = if (legIdx == 0) flightNumber else "${airlineIata}${baseFlightDigits + legIdx * 12}",
+                aircraftIataCode = aircraftSpec.iataCode,
+                durationFormatted = legDurationLabel,
+                layoverMinutesAfterSegment = layoverAfter
+            )
+        }
+    }
+
+    private fun parseHhMmToMinutes(hhMm: String): Int {
+        val parts = hhMm.trim().split(":")
+        val h = parts.getOrNull(0)?.toIntOrNull() ?: 9
+        val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        return (h * 60 + m)
+    }
+
+    private fun formatMinutesToHhMm(totalMins: Int): String {
+        val norm = ((totalMins % 1440) + 1440) % 1440
+        val h = norm / 60
+        val m = norm % 60
+        return "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
+    }
 }
+

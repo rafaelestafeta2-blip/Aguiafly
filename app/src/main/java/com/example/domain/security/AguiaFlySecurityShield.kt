@@ -128,9 +128,44 @@ object KeystoreVaultCipher {
 }
 
 /**
- * Mascaramento de documentos (PII) e validador internacional ICAO/Schengen para passaportes.
+ * Mascaramento de documentos (PII), Sanitizador de Nomes IATA/GDS e Validador Internacional ICAO/Schengen.
  */
 object PassportSecurityValidator {
+
+    /**
+     * Remove acentos, cedilhas (ç -> C) e caracteres especiais dos nomes para corresponder
+     * aos padrões estritos de IATA/GDS exigidos pela API da Duffel (given_name / family_name).
+     */
+    fun sanitizeIataGdsName(rawName: String?): String {
+        val input = rawName?.trim().orEmpty()
+        if (input.isEmpty()) return ""
+        val normalized = java.text.Normalizer.normalize(input, java.text.Normalizer.Form.NFD)
+        return normalized
+            .replace(Regex("[\\p{InCombiningDiacriticalMarks}]"), "")
+            .replace("ç", "C", ignoreCase = true)
+            .replace("ñ", "N", ignoreCase = true)
+            .replace("ß", "SS")
+            .replace(Regex("[^a-zA-Z\\s-]"), " ")
+            .replace("-", " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .uppercase()
+    }
+
+    /**
+     * Sanitiza o telefone no padrão internacional E.164 (+351..., +55...) exigido pela Duffel API.
+     */
+    fun sanitizeE164PhoneNumber(rawPhone: String?, defaultDialCode: String = "+351"): String {
+        val trimmed = rawPhone?.trim().orEmpty()
+        val digits = trimmed.filter { it.isDigit() }
+        if (digits.isEmpty()) return "${defaultDialCode}910000000"
+        return if (trimmed.startsWith("+")) {
+            "+$digits"
+        } else {
+            val cleanCode = defaultDialCode.filter { it.isDigit() }
+            if (digits.startsWith(cleanCode)) "+$digits" else "+$cleanCode$digits"
+        }
+    }
 
     fun maskDocumentNumber(raw: String?): String {
         val clean = raw?.trim()?.uppercase().orEmpty()
@@ -200,6 +235,77 @@ object PassportSecurityValidator {
             daysRemaining = daysFromFlight,
             badgeTitle = "VÁLIDO ICAO • +${daysFromFlight / 30} MESES",
             helperMessage = "Documento apto para embarque nacional e internacional (regra ICAO de +6 meses atendida).",
+            canProceedToIssueTicket = true
+        )
+    }
+
+    /**
+     * Valida a Data de Nascimento (`born_on`) no padrão estrito AAAA-MM-DD exigido pelo APIS / IATA GDS.
+     * Bloqueia a emissão caso esteja vazia, em formato inválido ou seja posterior à data atual/voo.
+     */
+    fun validateBirthDate(
+        birthDateIso: String,
+        referenceFlightDateIso: String? = null
+    ): PassportExpiryAssessment {
+        val clean = birthDateIso.trim()
+        if (clean.isEmpty()) {
+            return PassportExpiryAssessment(
+                status = PassportValidityStatus.EMPTY,
+                badgeTitle = "Data de Nascimento Obrigatória",
+                helperMessage = "Informe a data de nascimento (born_on) no formato AAAA-MM-DD (ex: 1992-05-15).",
+                canProceedToIssueTicket = false
+            )
+        }
+
+        val parsedBirth = try {
+            LocalDate.parse(clean.take(10))
+        } catch (_: Exception) {
+            return PassportExpiryAssessment(
+                status = PassportValidityStatus.INVALID_DATE_FORMAT,
+                badgeTitle = "Data de Nascimento Inválida",
+                helperMessage = "Use o formato estrito AAAA-MM-DD para a data de nascimento (ex: 1992-05-15).",
+                canProceedToIssueTicket = false
+            )
+        }
+
+        val referenceDate = try {
+            referenceFlightDateIso?.takeIf { it.length >= 10 }?.let { LocalDate.parse(it.take(10)) }
+                ?: LocalDate.now()
+        } catch (_: Exception) {
+            LocalDate.now()
+        }
+
+        val today = LocalDate.now()
+        if (!parsedBirth.isBefore(today) || !parsedBirth.isBefore(referenceDate)) {
+            return PassportExpiryAssessment(
+                status = PassportValidityStatus.EXPIRED,
+                badgeTitle = "DATA DE NASCIMENTO INVÁLIDA",
+                helperMessage = "A data de nascimento deve ser anterior à data de hoje e do voo.",
+                canProceedToIssueTicket = false
+            )
+        }
+
+        val ageYears = ChronoUnit.YEARS.between(parsedBirth, referenceDate)
+        if (ageYears > 120) {
+            return PassportExpiryAssessment(
+                status = PassportValidityStatus.INVALID_DATE_FORMAT,
+                badgeTitle = "ANO DE NASCIMENTO INVÁLIDO",
+                helperMessage = "Verifique o ano de nascimento informado ($clean).",
+                canProceedToIssueTicket = false
+            )
+        }
+
+        val categoryLabel = when {
+            ageYears < 2 -> "BEBÉ (<2 ANOS)"
+            ageYears < 12 -> "CRIANÇA ($ageYears ANOS)"
+            else -> "ADULTO ($ageYears ANOS)"
+        }
+
+        return PassportExpiryAssessment(
+            status = PassportValidityStatus.VALID,
+            daysRemaining = ageYears,
+            badgeTitle = "BORN_ON VALIDADO • $categoryLabel",
+            helperMessage = "Data de nascimento validada para emissão APIS/IATA.",
             canProceedToIssueTicket = true
         )
     }

@@ -36,6 +36,7 @@ import com.example.domain.pricing.MarkupEngine
 import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -94,6 +95,7 @@ class FlightBookingViewModel(
     private val _rawOffers = MutableStateFlow<List<EnrichedFlightOffer>>(emptyList())
     private val _isSearching = MutableStateFlow(false)
     val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+    private var searchJob: Job? = null
 
     private val _selectedOffer = MutableStateFlow<EnrichedFlightOffer?>(null)
     val selectedOffer: StateFlow<EnrichedFlightOffer?> = _selectedOffer.asStateFlow()
@@ -378,15 +380,26 @@ class FlightBookingViewModel(
     }
 
     fun executeSearch() {
-        viewModelScope.launch {
+        searchJob?.cancel()
+        val reqOrigin = _originIata.value
+        val reqDest = _destinationIata.value
+        val reqDate = _departureDate.value
+        val reqReturnDate = _returnDate.value
+        val reqTripType = _tripType.value
+        val reqPax = _passengerComposition.value
+        val reqCabin = _cabinClass.value
+        searchJob = viewModelScope.launch {
             _isSearching.value = true
             try {
                 val results = flightRepository.searchFlights(
-                    originIata = _originIata.value,
-                    destinationIata = _destinationIata.value,
-                    departureDate = _departureDate.value,
-                    cabinClass = _cabinClass.value,
-                    markupConfig = markupConfig.value
+                    originIata = reqOrigin,
+                    destinationIata = reqDest,
+                    departureDate = reqDate,
+                    cabinClass = reqCabin,
+                    markupConfig = markupConfig.value,
+                    returnDate = reqReturnDate,
+                    tripType = reqTripType,
+                    passengerComposition = reqPax
                 )
                 _rawOffers.value = results
 
@@ -395,8 +408,8 @@ class FlightBookingViewModel(
                 if (cheapestOffer != null) {
                     val priceEur = cheapestOffer.pricing.displayFareBeforeAncillariesEur
                     priceAlerts.value.forEach { alert ->
-                        if (alert.originIata.equals(_originIata.value, ignoreCase = true) &&
-                            alert.destinationIata.equals(_destinationIata.value, ignoreCase = true) &&
+                        if (alert.originIata.equals(reqOrigin, ignoreCase = true) &&
+                            alert.destinationIata.equals(reqDest, ignoreCase = true) &&
                             priceEur <= alert.targetMaxPriceEur &&
                             alert.id.isNotBlank()
                         ) {

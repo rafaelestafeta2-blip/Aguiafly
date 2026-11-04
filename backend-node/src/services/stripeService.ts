@@ -65,22 +65,26 @@ export interface CreateCheckoutIntentInput {
   markupAmountEur?: number;
   ancillariesAmountEur?: number;
   customerEmail: string;
+  captureMethod?: "manual" | "automatic";
 }
 
 /**
  * Cria um PaymentIntent seguro na Stripe utilizando a Chave Secreta no servidor.
- * O valor cobrado é rigorosamente calculado pela fórmula: €3.50 + 3.5% + Tarifa Neta.
+ * Por padrão utiliza `capture_method: 'manual'` para reservar o limite sem capturar até a confirmação da Duffel.
  */
 export async function createStripePaymentIntent(input: CreateCheckoutIntentInput) {
   const pricing = calculateStripeFinalFare(input.netAmountEur, input.ancillariesAmountEur || 0);
+  const captureMethod = input.captureMethod || "manual";
 
   if (!isStripeSecretConfigured()) {
     console.log(
-      `[Stripe Sandbox Server] Chave Secreta em modo placeholder. Simulando PaymentIntent de €${pricing.grandTotalEur} (${pricing.formulaDescription})`
+      `[Stripe Sandbox Server] Chave Secreta em modo placeholder. Simulando PaymentIntent (${captureMethod}) de €${pricing.grandTotalEur}`
     );
     return {
       paymentIntentId: `pi_mock_server_${Date.now()}`,
       clientSecret: `pi_mock_secret_${Date.now()}`,
+      status: captureMethod === "manual" ? "requires_capture" : "succeeded",
+      captureMethod,
       totalChargedEur: pricing.grandTotalEur,
       pricing,
     };
@@ -90,6 +94,7 @@ export async function createStripePaymentIntent(input: CreateCheckoutIntentInput
   const paymentIntent = await stripe.paymentIntents.create({
     amount: pricing.amountInCents,
     currency: "eur",
+    capture_method: captureMethod,
     receipt_email: input.customerEmail,
     automatic_payment_methods: { enabled: true },
     metadata: {
@@ -99,6 +104,7 @@ export async function createStripePaymentIntent(input: CreateCheckoutIntentInput
       percentage_fee_eur: pricing.percentageFeeEur.toFixed(2),
       ota_markup_eur: pricing.markupTotalEur.toFixed(2),
       ancillaries_eur: pricing.ancillariesEur.toFixed(2),
+      capture_method: captureMethod,
       pricing_formula: "€3.50 + 3.5% + Tarifa Neta",
     },
   });
@@ -106,6 +112,8 @@ export async function createStripePaymentIntent(input: CreateCheckoutIntentInput
   return {
     paymentIntentId: paymentIntent.id,
     clientSecret: paymentIntent.client_secret,
+    status: paymentIntent.status,
+    captureMethod,
     totalChargedEur: pricing.grandTotalEur,
     pricing,
   };
@@ -117,34 +125,36 @@ export interface ChargeTokenizedCardInput {
   netAmountEur: number;
   ancillariesAmountEur?: number;
   customerEmail: string;
+  captureMethod?: "manual" | "automatic";
 }
 
 /**
- * Cobra com segurança o cartão previamente tokenizado no frontend com a Chave Publicável.
- * O processamento da cobrança é executado exclusivamente no backend via Chave Secreta (STRIPE_SECRET_KEY).
+ * Autoriza (capture_method: 'manual') ou cobra o cartão previamente tokenizado no frontend.
  */
 export async function chargeTokenizedCard(input: ChargeTokenizedCardInput) {
   const pricing = calculateStripeFinalFare(input.netAmountEur, input.ancillariesAmountEur || 0);
+  const captureMethod = input.captureMethod || "manual";
 
   if (!isStripeSecretConfigured()) {
     console.log(
-      `[Stripe Backend Charge] Cobrando cartão tokenizado (${input.token}) via Chave Secreta Sandbox: €${pricing.grandTotalEur} para ${input.customerEmail}`
+      `[Stripe Backend Authorize] Autorizando cartão tokenizado (${input.token}, capture_method=${captureMethod}): €${pricing.grandTotalEur} para ${input.customerEmail}`
     );
     return {
       success: true,
       paymentIntentId: `pi_live_mock_${Date.now()}`,
       clientSecret: `pi_live_mock_sec_${Date.now()}`,
-      status: "succeeded",
+      status: captureMethod === "manual" ? "requires_capture" : "succeeded",
+      captureMethod,
       totalChargedEur: pricing.grandTotalEur,
       pricing,
     };
   }
 
   const stripe = getStripeClient();
-  // Cobrança direta com token Stripe utilizando PaymentIntents / Confirm no servidor seguro
   const paymentIntent = await stripe.paymentIntents.create({
     amount: pricing.amountInCents,
     currency: "eur",
+    capture_method: captureMethod,
     receipt_email: input.customerEmail,
     confirm: true,
     payment_method_data: {
@@ -163,22 +173,91 @@ export async function chargeTokenizedCard(input: ChargeTokenizedCardInput) {
       ota_markup_eur: pricing.markupTotalEur.toFixed(2),
       ancillaries_eur: pricing.ancillariesEur.toFixed(2),
       client_token_used: input.token.slice(0, 8) + "...",
+      capture_method: captureMethod,
       pricing_formula: "€3.50 + 3.5% + Tarifa Neta",
     },
   });
 
   return {
-    success: paymentIntent.status === "succeeded",
+    success:
+      paymentIntent.status === "requires_capture" || paymentIntent.status === "succeeded",
     paymentIntentId: paymentIntent.id,
     clientSecret: paymentIntent.client_secret,
     status: paymentIntent.status,
+    captureMethod,
     totalChargedEur: pricing.grandTotalEur,
     pricing,
   };
 }
 
 /**
- * Verifica na Stripe se o pagamento foi liquidado antes de emitir o bilhete na Duffel.
+ * Captura definitivamente um PaymentIntent previamente autorizado com `capture_method: 'manual'`
+ * somente APÓS a emissão bem-sucedida da reserva na Duffel (POST /air/orders).
+ */
+export async function captureStripePaymentIntent(
+  paymentIntentId: string,
+  metadata?: Record<string, string>
+) {
+  if (
+    !isStripeSecretConfigured() ||
+    paymentIntentId.startsWith("pi_mock_") ||
+    paymentIntentId.startsWith("pi_live_mock_")
+  ) {
+    return {
+      paymentIntentId,
+      status: "succeeded",
+      capturedAtIso: new Date().toISOString(),
+    };
+  }
+
+  const stripe = getStripeClient();
+  const captured = await stripe.paymentIntents.capture(paymentIntentId, {
+    ...(metadata ? { metadata } : {}),
+  });
+
+  return {
+    paymentIntentId: captured.id,
+    status: captured.status,
+    capturedAtIso: new Date().toISOString(),
+  };
+}
+
+/**
+ * Cancela imediatamente a pré-autorização na Stripe (`stripe.paymentIntents.cancel`)
+ * quando a Duffel responde com erro (ex: assento esgotado), libertando o limite do cliente
+ * na hora sem gerar cobrança nem estorno na fatura.
+ */
+export async function cancelStripePaymentIntentHold(
+  paymentIntentId: string,
+  reason: Stripe.PaymentIntentCancelParams.CancellationReason = "abandoned"
+) {
+  if (
+    !isStripeSecretConfigured() ||
+    paymentIntentId.startsWith("pi_mock_") ||
+    paymentIntentId.startsWith("pi_live_mock_")
+  ) {
+    return {
+      paymentIntentId,
+      status: "canceled",
+      canceledAtIso: new Date().toISOString(),
+    };
+  }
+
+  const stripe = getStripeClient();
+  const canceled = await stripe.paymentIntents.cancel(paymentIntentId, {
+    cancellation_reason: reason,
+  });
+
+  return {
+    paymentIntentId: canceled.id,
+    status: canceled.status,
+    canceledAtIso: new Date().toISOString(),
+  };
+}
+
+/**
+ * Verifica na Stripe se o pagamento está autorizado (`requires_capture`) ou liquidado (`succeeded`)
+ * antes de emitir o bilhete na Duffel.
  */
 export async function verifyStripePaymentSucceeded(paymentIntentId: string): Promise<boolean> {
   if (paymentIntentId.startsWith("pi_mock_") || paymentIntentId.startsWith("pi_live_mock_")) {
@@ -190,7 +269,7 @@ export async function verifyStripePaymentSucceeded(paymentIntentId: string): Pro
   try {
     const stripe = getStripeClient();
     const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
-    return intent.status === "succeeded";
+    return intent.status === "requires_capture" || intent.status === "succeeded";
   } catch (err) {
     console.warn(`[Stripe Verification] Failed to retrieve intent ${paymentIntentId}:`, err);
     return false;

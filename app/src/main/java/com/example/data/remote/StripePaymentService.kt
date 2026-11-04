@@ -5,6 +5,7 @@ import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.Path
 
 data class StripePaymentIntentResponse(
     @Json(name = "id") val id: String,
@@ -48,9 +49,7 @@ interface StripePaymentService {
     ): StripeTokenResponse
 
     /**
-     * Cria e liquida o PaymentIntent na Stripe em EUR.
-     * Utiliza a Chave Secreta (STRIPE_SECRET_KEY) exclusivamente no fluxo seguro de cobrança do valor final
-     * (€3.50 + 3.5% + Tarifa Neta + Opcionais).
+     * Cria o PaymentIntent na Stripe em EUR com `capture_method = "manual"` (autorização sem captura imediata).
      */
     @FormUrlEncoded
     @POST("v1/payment_intents")
@@ -58,6 +57,7 @@ interface StripePaymentService {
         @Header("Authorization") bearerSecretKey: String,
         @Field("amount") amountCents: Long,
         @Field("currency") currency: String = "eur",
+        @Field("capture_method") captureMethod: String = "manual",
         @Field("payment_method") paymentMethod: String = "pm_card_visa",
         @Field("confirm") confirm: Boolean = true,
         @Field("automatic_payment_methods[enabled]") autoMethods: Boolean = true,
@@ -69,6 +69,10 @@ interface StripePaymentService {
         @Field("metadata[pricing_formula]") pricingFormula: String = "€3.50 + 3.5% + Tarifa Neta"
     ): StripePaymentIntentResponse
 
+    /**
+     * Cria e autoriza (`capture_method = "manual"`) o PaymentIntent na Stripe com token de cartão.
+     * O dinheiro fica reservado (`requires_capture`) e só é capturado após sucesso do `POST /air/orders` na Duffel.
+     */
     @FormUrlEncoded
     @POST("v1/payment_intents")
     suspend fun createEurPaymentIntentWithToken(
@@ -76,6 +80,7 @@ interface StripePaymentService {
         @Header("Idempotency-Key") idempotencyKey: String,
         @Field("amount") amountCents: Long,
         @Field("currency") currency: String = "eur",
+        @Field("capture_method") captureMethod: String = "manual",
         @Field("confirm") confirm: Boolean = true,
         @Field("payment_method_data[type]") paymentMethodType: String = "card",
         @Field("payment_method_data[card][token]") cardToken: String,
@@ -87,6 +92,34 @@ interface StripePaymentService {
         @Field("metadata[net_fare_eur]") netFareEur: String,
         @Field("metadata[ota_markup_eur]") otaMarkupEur: String,
         @Field("metadata[pricing_formula]") pricingFormula: String = "€3.50 + 3.5% + Tarifa Neta"
+    ): StripePaymentIntentResponse
+
+    /**
+     * Captura definitivamente o dinheiro na Stripe (`POST /v1/payment_intents/{id}/capture`)
+     * somente APÓS a Duffel responder com SUCESSO na criação do pedido (`POST /air/orders`).
+     */
+    @FormUrlEncoded
+    @POST("v1/payment_intents/{paymentIntentId}/capture")
+    suspend fun capturePaymentIntent(
+        @Header("Authorization") bearerSecretKey: String,
+        @Header("Idempotency-Key") idempotencyKey: String,
+        @Path("paymentIntentId") paymentIntentId: String,
+        @Field("amount_to_capture") amountToCaptureCents: Long,
+        @Field("metadata[duffel_order_id]") duffelOrderId: String,
+        @Field("metadata[booking_reference]") bookingReference: String
+    ): StripePaymentIntentResponse
+
+    /**
+     * Cancela imediatamente a autorização na Stripe (`POST /v1/payment_intents/{id}/cancel`)
+     * caso a Duffel responda com ERRO (ex: assento esgotado), libertando o limite do cliente
+     * sem gerar cobrança nem estorno na fatura.
+     */
+    @FormUrlEncoded
+    @POST("v1/payment_intents/{paymentIntentId}/cancel")
+    suspend fun cancelPaymentIntentHold(
+        @Header("Authorization") bearerSecretKey: String,
+        @Path("paymentIntentId") paymentIntentId: String,
+        @Field("cancellation_reason") cancellationReason: String = "abandoned"
     ): StripePaymentIntentResponse
 
     /**

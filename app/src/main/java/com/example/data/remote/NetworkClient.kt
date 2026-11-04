@@ -67,6 +67,16 @@ object NetworkClient {
             .build()
             .create(KiwiTequilaApiService::class.java)
     }
+
+    fun createBackendMiddlewareApi(baseUrl: String): AguiaFlyBackendMiddlewareService {
+        val normalizedUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+        return Retrofit.Builder()
+            .baseUrl(normalizedUrl)
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(AguiaFlyBackendMiddlewareService::class.java)
+    }
 }
 
 

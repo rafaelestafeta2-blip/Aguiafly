@@ -555,10 +555,37 @@ fun FlightOfferCard(
                             )
                             Spacer(modifier = Modifier.width(2.dp))
                             Text(
-                                text = "Bagagem mão",
-                                fontSize = 10.sp,
+                                text = "Mão: ${offer.carryOnBaggageAllowance} • Desp.: ${offer.checkedBaggageAllowance}",
+                                fontSize = 9.5.sp,
                                 color = Color(0xFF64748B),
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    if (offer.airportChange || offer.hasCriticalLayoverAlert) {
+                        val alertLabel = buildList {
+                            if (offer.airportChange) add("⚠️ Troca de aeroporto na conexão")
+                            if (!offer.criticalLayoverAlertSummary.isNullOrBlank()) add(offer.criticalLayoverAlertSummary)
+                        }.joinToString(" • ")
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFFEF2F2),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFFECACA), RoundedCornerShape(8.dp))
+                                .testTag("flight_critical_alert_${offer.flightNumber}")
+                        ) {
+                            Text(
+                                text = alertLabel,
+                                fontSize = 10.sp,
+                                color = Color(0xFFB91C1C),
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                     }

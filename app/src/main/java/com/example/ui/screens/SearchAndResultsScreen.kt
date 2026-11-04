@@ -59,6 +59,7 @@ import com.example.data.model.PlaceAutocompleteCatalog
 import com.example.data.model.PriceAlertSubscription
 import com.example.data.model.TravelPromotionDeal
 import com.example.data.model.TripType
+import com.example.domain.concierge.AirportAndLoyaltyCatalog
 import com.example.domain.location.DetectedAirportResult
 import com.example.domain.location.NearestAirportLocator
 import com.example.domain.pricing.DisplayCurrency
@@ -115,10 +116,14 @@ fun SearchAndResultsScreen(
     onToggleVipLoungePass: (com.example.data.model.VipLoungeOffer) -> Unit = {}
 ) {
     val context = LocalContext.current
-    var localOrigin by remember(originIata) { mutableStateOf(originIata) }
-    var localDest by remember(destinationIata) { mutableStateOf(destinationIata) }
-    var localDate by remember(departureDate) { mutableStateOf(departureDate) }
-    var localCabin by remember(cabinClass) { mutableStateOf(cabinClass) }
+    var localOrigin by remember { mutableStateOf(originIata) }
+    var localDest by remember { mutableStateOf(destinationIata) }
+    var localDate by remember { mutableStateOf(departureDate) }
+    var localCabin by remember { mutableStateOf(cabinClass) }
+    LaunchedEffect(originIata) { localOrigin = originIata }
+    LaunchedEffect(destinationIata) { localDest = destinationIata }
+    LaunchedEffect(departureDate) { localDate = departureDate }
+    LaunchedEffect(cabinClass) { localCabin = cabinClass }
     var showCreateAlertDialog by remember { mutableStateOf(false) }
     var hasAutoDetectedLocation by rememberSaveable { mutableStateOf(false) }
     var hasTriggeredStartupPromoRadar by rememberSaveable { mutableStateOf(false) }
@@ -178,8 +183,36 @@ fun SearchAndResultsScreen(
         }
     }
 
-    val lowestCurrentFareEur = remember(offers) {
-        offers.minOfOrNull { it.pricing.displayFareBeforeAncillariesEur } ?: 320.0
+    val offersMatchCurrentSelection = remember(offers, localOrigin, localDest, localDate) {
+        offers.isNotEmpty() &&
+            offers.first().originIata.equals(localOrigin, ignoreCase = true) &&
+            offers.first().destinationIata.equals(localDest, ignoreCase = true) &&
+            offers.first().departureIso.take(10) == localDate.take(10)
+    }
+
+    val lowestCurrentFareEur = remember(
+        offers,
+        offersMatchCurrentSelection,
+        localOrigin,
+        localDest,
+        localDate,
+        localCabin,
+        tripType,
+        passengers
+    ) {
+        val exactFormulaFare = AirportAndLoyaltyCatalog.computeExactDisplayLowestFareEur(
+            originIata = localOrigin,
+            destinationIata = localDest,
+            dateIso = localDate,
+            cabinClass = localCabin,
+            tripMultiplier = tripType.multiplier,
+            passengerMultiplier = passengers.fareMultiplier
+        )
+        if (offersMatchCurrentSelection) {
+            offers.minOfOrNull { it.pricing.displayFareBeforeAncillariesEur } ?: exactFormulaFare
+        } else {
+            exactFormulaFare
+        }
     }
 
     val cabins = listOf(
@@ -288,6 +321,7 @@ fun SearchAndResultsScreen(
                             onSelectIata = { newOriginIata ->
                                 localOrigin = newOriginIata.uppercase()
                                 onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                                onExecuteSearch()
                             }
                         )
 
@@ -307,6 +341,7 @@ fun SearchAndResultsScreen(
                                     localOrigin = localDest
                                     localDest = temp
                                     onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                                    onExecuteSearch()
                                 },
                                 modifier = Modifier
                                     .size(36.dp)
@@ -330,6 +365,7 @@ fun SearchAndResultsScreen(
                             onSelectIata = { newDestIata ->
                                 localDest = newDestIata.uppercase()
                                 onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                                onExecuteSearch()
                             }
                         )
                     }
@@ -350,6 +386,7 @@ fun SearchAndResultsScreen(
                                         if (localOrigin != hub.iata) {
                                             localDest = hub.iata
                                             onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                                            onExecuteSearch()
                                         }
                                     }
                             ) {

@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Badge
@@ -42,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.example.data.model.PASSPORT_ISSUING_COUNTRIES
 import com.example.data.model.PassengerDocumentInfo
 import com.example.data.model.TravelDocType
 import com.example.domain.security.PassportSecurityValidator
@@ -61,6 +64,13 @@ fun PassengerDocumentSection(
     val expiryAssessment = remember(documentInfo.expiryDate, flightDepartureDateIso) {
         PassportSecurityValidator.validateDocumentExpiry(
             expiryDateIso = documentInfo.expiryDate,
+            referenceFlightDateIso = flightDepartureDateIso
+        )
+    }
+
+    val birthDateAssessment = remember(documentInfo.birthDate, flightDepartureDateIso) {
+        PassportSecurityValidator.validateBirthDate(
+            birthDateIso = documentInfo.birthDate,
             referenceFlightDateIso = flightDepartureDateIso
         )
     }
@@ -116,6 +126,54 @@ fun PassengerDocumentSection(
                 }
             }
 
+            // Seletor de Género IATA (M / F) exigido pela Duffel API
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Género IATA:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                listOf("m" to "Masculino (MR)", "f" to "Feminino (MS)").forEach { (code, label) ->
+                    FilterChip(
+                        selected = documentInfo.gender.equals(code, ignoreCase = true),
+                        onClick = { onUpdateDocumentInfo(documentInfo.copy(gender = code)) },
+                        label = { Text(label) },
+                        modifier = Modifier.testTag("passenger_gender_chip_$code")
+                    )
+                }
+            }
+
+            // Seletor de País Emissor do Documento (issuing_country_code ISO-3166-1 alpha-2)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "País Emissor do Passaporte / Documento (ISO):",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PASSPORT_ISSUING_COUNTRIES.forEach { country ->
+                        val isSelected = documentInfo.issuingCountryCode.equals(country.isoCode, ignoreCase = true)
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                onUpdateDocumentInfo(documentInfo.copy(issuingCountryCode = country.isoCode))
+                            },
+                            label = { Text(country.label) },
+                            modifier = Modifier.testTag("issuing_country_chip_${country.isoCode}")
+                        )
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = documentInfo.documentNumber,
                 onValueChange = {
@@ -150,7 +208,7 @@ fun PassengerDocumentSection(
                 supportingText = if (documentInfo.documentNumber.isNotBlank()) {
                     {
                         val maskedPreview = PassportSecurityValidator.maskDocumentNumber(documentInfo.documentNumber)
-                        Text("Exibição protegida no bilhete/cofre: $maskedPreview")
+                        Text("Exibição protegida no bilhete/cofre: $maskedPreview • Emissor: ${documentInfo.issuingCountryCode}")
                     }
                 } else null,
                 singleLine = true,
@@ -167,6 +225,17 @@ fun PassengerDocumentSection(
                     },
                     label = { Text("Data de Nascimento") },
                     placeholder = { Text("AAAA-MM-DD") },
+                    isError = documentInfo.birthDate.isNotBlank() && !birthDateAssessment.canProceedToIssueTicket,
+                    supportingText = {
+                        Text(
+                            text = birthDateAssessment.badgeTitle,
+                            color = if (birthDateAssessment.canProceedToIssueTicket) {
+                                Color(0xFF10B981)
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            }
+                        )
+                    },
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)
@@ -179,6 +248,7 @@ fun PassengerDocumentSection(
                     },
                     label = { Text("Validade Documento") },
                     placeholder = { Text("AAAA-MM-DD") },
+                    isError = documentInfo.expiryDate.isNotBlank() && !expiryAssessment.canProceedToIssueTicket,
                     singleLine = true,
                     modifier = Modifier
                         .weight(1f)

@@ -25,23 +25,45 @@ object AirportAndLoyaltyCatalog {
         7 to "Dom"
     )
 
+    private val liveCalibratedRouteBaseEcoMap = java.util.concurrent.ConcurrentHashMap<String, Double>()
+
+    /**
+     * Registra a tarifa base neta (Economy) obtida em tempo real da API (Duffel) para o par de aeroportos,
+     * garantindo que o Calendário Mensal e os resultados de busca mostrem exatamente os mesmos valores.
+     */
+    fun recordLiveRouteBaseEcoNet(originIata: String, destinationIata: String, baseEcoNetEur: Double) {
+        val key = "${originIata.trim().uppercase()}_${destinationIata.trim().uppercase()}"
+        if (baseEcoNetEur > 10.0) {
+            liveCalibratedRouteBaseEcoMap[key] = round(baseEcoNetEur * 100.0) / 100.0
+        }
+    }
+
     /**
      * Retorna a tarifa base neta (Economy) de referência para qualquer par de aeroportos,
-     * garantindo consistência 100% exata entre o Calendário de Tarifas (+/- 3 dias e Mês) e a lista de voos.
+     * priorizando o valor real calibrado pela API para a rota e garantindo consistência 100% exata
+     * entre o Calendário de Tarifas e a lista de voos.
      */
     fun resolveRouteBaseNetEcoEur(originIata: String, destinationIata: String): Double {
         val orig = originIata.trim().uppercase()
         val dest = destinationIata.trim().uppercase()
         if (orig == dest) return 48.0
+        val key = "${orig}_${dest}"
+        liveCalibratedRouteBaseEcoMap[key]?.let { return it }
+
+        val brazilAirports = setOf("GRU", "GIG", "VCP", "CGH", "BSB", "CNF", "SSA", "REC", "FOR", "POA", "CWB", "BEL", "MAO")
+        val longHaulIntl = setOf("JFK", "MIA", "MCO", "LAX", "DXB", "EZE", "SCL", "BOG", "MEX")
+        val origInBrazil = orig in brazilAirports
+        val destInBrazil = dest in brazilAirports
+
         val pair = setOf(orig, dest)
         return when {
             pair == setOf("IBZ", "BCN") || pair == setOf("IBZ", "PMI") || pair == setOf("IBZ", "VLC") -> 29.0
             pair == setOf("IBZ", "MAD") || pair == setOf("LIS", "MAD") || pair == setOf("OPO", "MAD") -> 36.0
             pair == setOf("LIS", "OPO") || pair == setOf("BCN", "MAD") -> 34.0
-            orig in listOf("GRU", "GIG", "VCP", "CGH", "BSB", "CNF", "SSA", "REC", "FOR") ||
-                dest in listOf("GRU", "GIG", "VCP", "CGH", "BSB", "CNF", "SSA", "REC", "FOR") ||
-                orig in listOf("JFK", "MIA", "MCO", "LAX", "DXB") ||
-                dest in listOf("JFK", "MIA", "MCO", "LAX", "DXB") -> 310.0
+            // Voo doméstico dentro do Brasil (ex: GRU -> FOR, GIG -> GRU)
+            origInBrazil && destInBrazil -> 64.0
+            // Voo intercontinental (ex: Europa <-> Brasil ou EUA/Dubai)
+            origInBrazil || destInBrazil || orig in longHaulIntl || dest in longHaulIntl -> 240.0
             else -> 48.0
         }
     }
@@ -95,6 +117,28 @@ object AirportAndLoyaltyCatalog {
     }
 
     /**
+     * Calcula o menor preço final de exibição (em EUR) para uma rota e data específicas,
+     * exatamente igual ao cálculo do calendário e da lista de voos.
+     */
+    fun computeExactDisplayLowestFareEur(
+        originIata: String,
+        destinationIata: String,
+        dateIso: String,
+        cabinClass: String = "economy",
+        tripMultiplier: Double = 1.0,
+        passengerMultiplier: Double = 1.0,
+        markupConfig: MarkupConfig = MarkupConfig()
+    ): Double {
+        val baseRouteEcoNet = resolveRouteBaseNetEcoEur(originIata, destinationIata)
+        val cabinMult = cabinClassMultiplier(cabinClass)
+        val paxTripFactor = (tripMultiplier * passengerMultiplier).coerceAtLeast(1.0)
+        val dateMult = calculateDateFareMultiplier(originIata, destinationIata, dateIso)
+        val singlePaxNet = round(baseRouteEcoNet * cabinMult * dateMult * 100.0) / 100.0
+        val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
+        return MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig).displayFareBeforeAncillariesEur
+    }
+
+    /**
      * Gera o Calendário de Tarifas Flexíveis (+/- 3 dias = 7 dias da semana ou 30 dias do mês)
      * destacando automaticamente com a badge "Melhor Tarifa" (`isLowestOfPeriod = true`) o dia mais barato.
      */
@@ -113,27 +157,25 @@ object AirportAndLoyaltyCatalog {
             .getOrDefault(LocalDate.of(2026, 11, 15))
 
         val dates: List<LocalDate> = if (flexibleModePlusMinus3Days) {
-            // Parâmetro oficial de datas flexíveis: +/- 3 dias em torno da data base (7 dias da semana)
             (-3L..3L).map { offset -> centerDate.plusDays(offset) }
         } else {
-            // Visão "Menor Preço do Mês": 30 dias completos a partir de -3 dias da data base
             val start = centerDate.minusDays(3)
             (0L until totalDaysInMonthMode.toLong()).map { offset -> start.plusDays(offset) }
         }
 
-        val baseRouteEcoNet = resolveRouteBaseNetEcoEur(originIata, destinationIata)
-        val cabinMult = cabinClassMultiplier(cabinClass)
-        val paxTripFactor = (tripMultiplier * passengerMultiplier).coerceAtLeast(1.0)
-
         val rawSlots = dates.map { date ->
             val iso = date.toString()
             val dow = date.dayOfWeek.value
-            val dateMult = calculateDateFareMultiplier(originIata, destinationIata, iso)
-            val singlePaxNet = round(baseRouteEcoNet * cabinMult * dateMult * 100.0) / 100.0
-            val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
-            val breakdown = MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig)
-
-            Triple(date, dow, breakdown.displayFareBeforeAncillariesEur)
+            val displayEur = computeExactDisplayLowestFareEur(
+                originIata = originIata,
+                destinationIata = destinationIata,
+                dateIso = iso,
+                cabinClass = cabinClass,
+                tripMultiplier = tripMultiplier,
+                passengerMultiplier = passengerMultiplier,
+                markupConfig = markupConfig
+            )
+            Triple(date, dow, displayEur)
         }
 
         val minFareInPeriod = rawSlots.minOfOrNull { it.third } ?: 0.0
@@ -175,9 +217,9 @@ object AirportAndLoyaltyCatalog {
     }
 
     /**
-     * Gera todos os dias (1..N) de um mês específico (`year`, `month`) calibrados diretamente
-     * pela tarifa real (`referenceLowestFareEur`) retornada na busca da rota para `anchorDateIso`,
-     * garantindo que o preço exibido no calendário corresponda ao preço real dos voos.
+     * Gera todos os dias (1..N) de um mês específico (`year`, `month`) usando exatamente a mesma
+     * fórmula e tarifa base calibrada da rota (`computeExactDisplayLowestFareEur`), garantindo que
+     * ao clicar em qualquer dia no calendário, o voo mais barato da pesquisa tenha 100% o mesmo valor!
      */
     fun generateFullMonthFareCalendar(
         year: Int,
@@ -195,40 +237,19 @@ object AirportAndLoyaltyCatalog {
         val lengthOfMonth = firstDay.lengthOfMonth()
         val dates = (0 until lengthOfMonth).map { firstDay.plusDays(it.toLong()) }
 
-        val baseRouteEcoNet = resolveRouteBaseNetEcoEur(originIata, destinationIata)
-        val cabinMult = cabinClassMultiplier(cabinClass)
-        val paxTripFactor = (tripMultiplier * passengerMultiplier).coerceAtLeast(1.0)
-
-        // Se temos a tarifa real retornada pela API na data pesquisada, calibramos a curva do mês por ela
-        val anchorDateMult = if (!anchorDateIso.isNullOrBlank()) {
-            calculateDateFareMultiplier(originIata, destinationIata, anchorDateIso)
-        } else {
-            1.0
-        }
-        val catalogAnchorDisplay = run {
-            val singlePaxNet = round(baseRouteEcoNet * cabinMult * anchorDateMult * 100.0) / 100.0
-            val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
-            MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig).displayFareBeforeAncillariesEur
-        }
-        val liveCalibrationRatio = if (referenceLowestFareEur != null && referenceLowestFareEur > 10.0 && catalogAnchorDisplay > 1.0) {
-            referenceLowestFareEur / catalogAnchorDisplay
-        } else {
-            1.0
-        }
-
         val rawSlots = dates.map { date ->
             val iso = date.toString()
             val dow = date.dayOfWeek.value
-            val dateMult = calculateDateFareMultiplier(originIata, destinationIata, iso)
-            val singlePaxNet = round(baseRouteEcoNet * cabinMult * dateMult * 100.0) / 100.0
-            val totalAdjustedNet = round(singlePaxNet * paxTripFactor * 100.0) / 100.0
-            val breakdown = MarkupEngine.calculateBreakdown(totalAdjustedNet, markupConfig)
-            val calibratedDisplayEur = if (!anchorDateIso.isNullOrBlank() && iso == anchorDateIso.take(10) && referenceLowestFareEur != null && referenceLowestFareEur > 10.0) {
-                referenceLowestFareEur
-            } else {
-                round(breakdown.displayFareBeforeAncillariesEur * liveCalibrationRatio * 100.0) / 100.0
-            }
-            Triple(date, dow, calibratedDisplayEur)
+            val displayEur = computeExactDisplayLowestFareEur(
+                originIata = originIata,
+                destinationIata = destinationIata,
+                dateIso = iso,
+                cabinClass = cabinClass,
+                tripMultiplier = tripMultiplier,
+                passengerMultiplier = passengerMultiplier,
+                markupConfig = markupConfig
+            )
+            Triple(date, dow, displayEur)
         }
 
         val minFareInMonth = rawSlots.minOfOrNull { it.third } ?: 0.0

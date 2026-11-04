@@ -58,6 +58,15 @@ export async function searchFlightsWithMarkup(
 }
 
 /**
+ * Consulta uma oferta individual na Duffel API (GET /air/offers/:id)
+ * para re-validação pré-checkout de expiração (expires_at) e tarifa (total_amount).
+ */
+export async function getDuffelOfferById(offerId: string) {
+  const offer = await duffel.offers.get(offerId);
+  return offer.data;
+}
+
+/**
  * Busca o mapa de assentos real de uma oferta na Duffel API.
  */
 export async function getOfferSeatMaps(offerId: string) {
@@ -67,7 +76,8 @@ export async function getOfferSeatMaps(offerId: string) {
 
 /**
  * Emite o bilhete (Order) na Duffel utilizando o saldo balance da OTA
- * pelo valor NETO da tarifa após confirmação do pagamento Stripe.
+ * pelo valor NETO da tarifa, aplicando sanitização estrita IATA/GDS nos nomes
+ * e enviando `identity_documents` quando exigido em rotas internacionais.
  */
 export async function createDuffelOrder(params: {
   selectedOfferId: string;
@@ -78,7 +88,33 @@ export async function createDuffelOrder(params: {
   email: string;
   phoneNumber: string;
   bornOn: string;
+  gender?: "m" | "f";
+  title?: "mr" | "ms" | "mrs" | "miss" | "dr";
+  identityDocuments?: Array<{
+    type: "passport";
+    unique_identifier: string;
+    expires_on: string;
+    issuing_country_code: string;
+  }>;
 }) {
+  const cleanGiven = (params.givenName || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[çÇ]/g, "C")
+    .replace(/[^a-zA-Z\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+  const cleanFamily = (params.familyName || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[çÇ]/g, "C")
+    .replace(/[^a-zA-Z\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
   const order = await duffel.orders.create({
     type: "instant",
     selected_offers: [params.selectedOfferId],
@@ -92,13 +128,16 @@ export async function createDuffelOrder(params: {
     passengers: [
       {
         id: params.passengerId,
-        given_name: params.givenName,
-        family_name: params.familyName,
-        email: params.email,
-        phone_number: params.phoneNumber,
-        born_on: params.bornOn,
-        title: "mr",
-        gender: "m",
+        given_name: cleanGiven,
+        family_name: cleanFamily,
+        email: params.email.trim().toLowerCase(),
+        phone_number: params.phoneNumber.trim(),
+        born_on: params.bornOn.trim(),
+        title: params.title || "mr",
+        gender: params.gender || "m",
+        ...(params.identityDocuments && params.identityDocuments.length > 0
+          ? { identity_documents: params.identityDocuments as any }
+          : {}),
       },
     ],
   });
