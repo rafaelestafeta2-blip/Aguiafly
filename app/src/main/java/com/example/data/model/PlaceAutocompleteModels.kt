@@ -39,10 +39,12 @@ data class AirportPlaceSuggestion(
 object PlaceAutocompleteCatalog {
 
     val GLOBAL_AIRPORTS: List<AirportPlaceSuggestion> = listOf(
-        AirportPlaceSuggestion("GRU", "São Paulo", "Guarulhos", "Brasil"),
+        AirportPlaceSuggestion("SAO", "São Paulo", "Todos os Aeroportos (GRU/CGH/VCP)", "Brasil"),
+        AirportPlaceSuggestion("GRU", "São Paulo", "Guarulhos Internacional", "Brasil"),
         AirportPlaceSuggestion("CGH", "São Paulo", "Congonhas", "Brasil"),
-        AirportPlaceSuggestion("VCP", "Campinas / São Paulo", "Viracopos", "Brasil"),
-        AirportPlaceSuggestion("GIG", "Rio de Janeiro", "Tom Jobim Galeão", "Brasil"),
+        AirportPlaceSuggestion("VCP", "Campinas / São Paulo", "Viracopos Internacional", "Brasil"),
+        AirportPlaceSuggestion("RIO", "Rio de Janeiro", "Todos os Aeroportos (GIG/SDU)", "Brasil"),
+        AirportPlaceSuggestion("GIG", "Rio de Janeiro", "Tom Jobim Galeão Internacional", "Brasil"),
         AirportPlaceSuggestion("SDU", "Rio de Janeiro", "Santos Dumont", "Brasil"),
         AirportPlaceSuggestion("BSB", "Brasília", "Presidente Juscelino Kubitschek", "Brasil"),
         AirportPlaceSuggestion("CNF", "Belo Horizonte", "Confins Tancredo Neves", "Brasil"),

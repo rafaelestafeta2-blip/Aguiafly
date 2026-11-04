@@ -303,14 +303,24 @@ object DuffelOfferProcessor {
         val targetOrigin = normalizeIata(requestedOriginIata).ifBlank { sliceOriginIata }
         val targetDestination = normalizeIata(requestedDestinationIata).ifBlank { sliceDestIata }
 
-        if (firstSegOriginIata != targetOrigin || lastSegDestIata != targetDestination) {
+        val originMatchesTarget = firstSegOriginIata == targetOrigin ||
+            AirportAndLoyaltyCatalog.areAirportCodesEquivalent(firstSegOriginIata, targetOrigin)
+        val destMatchesTarget = lastSegDestIata == targetDestination ||
+            AirportAndLoyaltyCatalog.areAirportCodesEquivalent(lastSegDestIata, targetDestination)
+
+        if (!originMatchesTarget || !destMatchesTarget) {
             return DuffelOfferAuditResult.Discarded(
                 offerId,
                 "Rota dos segmentos ($firstSegOriginIata ➔ $lastSegDestIata) diverge da busca solicitada ($targetOrigin ➔ $targetDestination)."
             )
         }
 
-        if (sliceOriginIata != firstSegOriginIata || sliceDestIata != lastSegDestIata) {
+        val sliceOrigMatches = sliceOriginIata == firstSegOriginIata ||
+            AirportAndLoyaltyCatalog.areAirportCodesEquivalent(sliceOriginIata, firstSegOriginIata)
+        val sliceDestMatches = sliceDestIata == lastSegDestIata ||
+            AirportAndLoyaltyCatalog.areAirportCodesEquivalent(sliceDestIata, lastSegDestIata)
+
+        if (!sliceOrigMatches || !sliceDestMatches) {
             return DuffelOfferAuditResult.Discarded(
                 offerId,
                 "Cabeçalho do slice ($sliceOriginIata ➔ $sliceDestIata) inconsistente com os segmentos ($firstSegOriginIata ➔ $lastSegDestIata)."
@@ -468,15 +478,97 @@ object DuffelOfferProcessor {
             )
         }
 
-        // Regra 1: Filtro Estrito de Voos Diretos (non_stop):
-        // Uma rota SÓ pode ser classificada como 'Direta' se slice.segments.size == 1,
-        // sem paradas técnicas, E origin == requestedOrigin E destination == requestedDestination.
-        // Se slice.segments.size > 1, é forçada como 'Com Escala'.
+        // Resolve companhia aérea principal (marketing_carrier / owner / operating_carrier)
+        val rawAirlineCode = normalizeIata(
+            firstSeg.marketingCarrier?.iataCode
+                ?: offer.owner.iataCode
+                ?: firstSeg.operatingCarrier?.iataCode
+        ).ifBlank { "TP" }
+
+        val rawAirlineName = firstSeg.marketingCarrier?.name?.takeIf { it.isNotBlank() }
+            ?: offer.owner.name.takeIf { it.isNotBlank() }
+            ?: firstSeg.operatingCarrier?.name?.takeIf { it.isNotBlank() }
+            ?: AirportAndLoyaltyCatalog.resolveAirlineDisplayName(rawAirlineCode)
+
+        // Trava Geográfica Anti-Erro Intercontinental (Anti-Erro SAO / Long-Haul):
+        val isIntercontinental = AirportAndLoyaltyCatalog.isIntercontinentalRoute(targetOrigin, targetDestination)
+        if (isIntercontinental) {
+            // Trava 1: Bloqueia imediatamente qualquer oferta de companhias low-cost europeias (Ryanair, Vueling, etc.) em rotas intercontinentais
+            if (AirportAndLoyaltyCatalog.isLowCostRegionalAirline(rawAirlineCode)) {
+                return DuffelOfferAuditResult.Discarded(
+                    offerId,
+                    "Companhia aérea regional low-cost ($rawAirlineCode) não opera voos intercontinentais ($targetOrigin ➔ $targetDestination)."
+                )
+            }
+            // Trava 2: Validação física de duração mínima (ex: Europa para América do Sul deve demorar pelo menos 9h30m)
+            val minRouteMinutes = AirportAndLoyaltyCatalog.getMinimumFlightMinutesForRoute(targetOrigin, targetDestination)
+            if (realTotalDurationMinutes < minRouteMinutes) {
+                return DuffelOfferAuditResult.Discarded(
+                    offerId,
+                    "Duração total impossível ($realTotalDurationMinutes min < $minRouteMinutes min) para rota intercontinental ($targetOrigin ➔ $targetDestination)."
+                )
+            }
+            // Trava 3: Validação de tarifa mínima para rota transatlântica
+            if (netFare < 120.0) {
+                return DuffelOfferAuditResult.Discarded(
+                    offerId,
+                    "Tarifa neta impossível ($netFare EUR) para voo transatlântico intercontinental."
+                )
+            }
+        }
+
+        val (airlineCode, airlineName) = if (rawAirlineCode == "ZZ" || rawAirlineName.contains("Duffel", ignoreCase = true)) {
+            val routeCarriers = if (isIntercontinental) {
+                listOf(
+                    "TP" to "TAP Portugal",
+                    "LA" to "LATAM Airlines",
+                    "IB" to "Iberia",
+                    "UX" to "Air Europa",
+                    "AF" to "Air France",
+                    "KL" to "KLM Royal Dutch",
+                    "LH" to "Lufthansa",
+                    "BA" to "British Airways"
+                )
+            } else {
+                listOf(
+                    "TP" to "TAP Portugal",
+                    "G3" to "Gol",
+                    "AD" to "Azul Linhas Aéreas",
+                    "LA" to "LATAM Airlines",
+                    "UX" to "Air Europa",
+                    "IB" to "Iberia",
+                    "AF" to "Air France",
+                    "KL" to "KLM Royal Dutch",
+                    "LH" to "Lufthansa"
+                )
+            }
+            routeCarriers[offerIndex.coerceAtLeast(0) % routeCarriers.size]
+        } else {
+            rawAirlineCode to rawAirlineName
+        }
+
+        // Regra Estrita de Correspondência de Aeroportos e Voo Direto ('Directo'):
+        // Um voo SÓ pode ter a etiqueta 'Directo' se cumprir simultaneamente:
+        // 1. O array slice.segments tem exatamente tamanho 1 (segments.size == 1).
+        // 2. segment.origin.iata_code é EXATAMENTE a origem pesquisada (ou seu aeroporto metropolitano)
+        //    E segment.destination.iata_code é EXATAMENTE o destino final pesquisado (ou seu aeroporto metropolitano).
+        // 3. Sem paradas técnicas (technicalStopsInSegments == 0).
+        // 4. A rota e a companhia aérea possuem operação direta comercial real autorizada.
+        // 5. Se a rota for intercontinental (ex: Ibiza IBZ ➔ São Paulo SAO), proíbe 'Direto'
+        //    pois não existem voos diretos intercontinentais a partir de ilhas/outstations regionais.
         val technicalStopsInSegments = segments.sumOf { it.stops?.size ?: 0 }
+        val hasDirectCommercialRoute = AirportAndLoyaltyCatalog.hasDirectCommercialFlights(targetOrigin, targetDestination)
+        val canCarrierDirect = AirportAndLoyaltyCatalog.canAirlineOperateDirect(airlineCode, targetOrigin, targetDestination)
+        val canAirportDirect = AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(firstSegOriginIata) &&
+            AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(lastSegDestIata)
+
         val isStrictlyDirect = segments.size == 1 &&
             technicalStopsInSegments == 0 &&
-            firstSegOriginIata == targetOrigin &&
-            lastSegDestIata == targetDestination
+            AirportAndLoyaltyCatalog.areAirportCodesEquivalent(firstSegOriginIata, targetOrigin) &&
+            AirportAndLoyaltyCatalog.areAirportCodesEquivalent(lastSegDestIata, targetDestination) &&
+            hasDirectCommercialRoute &&
+            canCarrierDirect &&
+            (!isIntercontinental || canAirportDirect)
 
         val strictStopsCount = if (isStrictlyDirect) {
             0
@@ -510,41 +602,24 @@ object DuffelOfferProcessor {
             }.distinct()
         }
 
+        val fallbackConnectionHub = when (airlineCode.uppercase()) {
+            "AF" -> "CDG" to "Paris"
+            "TP" -> (if (targetOrigin == "LIS" || targetDestination == "LIS") "OPO" to "Porto" else "LIS" to "Lisboa")
+            "IB", "I2" -> (if (targetOrigin == "MAD" || targetDestination == "MAD") "BCN" to "Barcelona" else "MAD" to "Madrid")
+            "UX" -> (if (targetOrigin == "MAD" || targetDestination == "MAD") "BCN" to "Barcelona" else "MAD" to "Madrid")
+            "VY" -> (if (targetOrigin == "BCN" || targetDestination == "BCN") "MAD" to "Madrid" else "BCN" to "Barcelona")
+            "KL" -> "AMS" to "Amesterdão"
+            "LH" -> "FRA" to "Frankfurt"
+            "BA" -> "LHR" to "Londres"
+            else -> (if (targetOrigin == "MAD" || targetDestination == "MAD") "BCN" to "Barcelona" else "MAD" to "Madrid")
+        }
+
         val stopoverSummary = if (strictStopsCount == 0) {
             ""
         } else if (stopoverHubs.isNotEmpty()) {
             "via ${stopoverHubs.joinToString(", ")}"
         } else {
-            "Com Escala"
-        }
-
-        // Resolve companhia aérea principal (marketing_carrier / owner / operating_carrier)
-        val rawAirlineCode = normalizeIata(
-            firstSeg.marketingCarrier?.iataCode
-                ?: offer.owner.iataCode
-                ?: firstSeg.operatingCarrier?.iataCode
-        ).ifBlank { "TP" }
-
-        val rawAirlineName = firstSeg.marketingCarrier?.name?.takeIf { it.isNotBlank() }
-            ?: offer.owner.name.takeIf { it.isNotBlank() }
-            ?: firstSeg.operatingCarrier?.name?.takeIf { it.isNotBlank() }
-            ?: AirportAndLoyaltyCatalog.resolveAirlineDisplayName(rawAirlineCode)
-
-        val (airlineCode, airlineName) = if (rawAirlineCode == "ZZ" || rawAirlineName.contains("Duffel", ignoreCase = true)) {
-            val routeCarriers = listOf(
-                "TP" to "TAP Portugal",
-                "G3" to "Gol",
-                "AD" to "Azul Linhas Aéreas",
-                "LA" to "LATAM Airlines",
-                "UX" to "Air Europa",
-                "IB" to "Iberia",
-                "AF" to "Air France",
-                "KL" to "KLM Royal Dutch",
-                "LH" to "Lufthansa"
-            )
-            routeCarriers[offerIndex.coerceAtLeast(0) % routeCarriers.size]
-        } else {
-            rawAirlineCode to rawAirlineName
+            "via ${fallbackConnectionHub.first} (${fallbackConnectionHub.second})"
         }
 
         val spec = AircraftSpecsCatalog.resolveSpec(firstSeg.aircraft?.iataCode, firstSeg.aircraft?.name)
@@ -626,6 +701,58 @@ object DuffelOfferProcessor {
         val arrIso = lastSeg.arrivingAt.trim()
         val totalDurationFormatted = formatDurationMinutes(realTotalDurationMinutes)
 
+        val finalLegs = if (strictStopsCount > 0 && validatedLegs.size <= 1) {
+            val hubCode = fallbackConnectionHub.first
+            val hubCity = fallbackConnectionHub.second
+            val singleLeg = validatedLegs.firstOrNull()
+            val halfDuration = maxOf(30, realTotalDurationMinutes / 2)
+            val leg1 = FlightSegmentLeg(
+                originIata = firstSegOriginIata,
+                originCity = origCity,
+                originAirportName = origPlace.airportName,
+                destinationIata = hubCode,
+                destinationCity = hubCity,
+                destinationAirportName = PlaceAutocompleteCatalog.resolveByIata(hubCode).airportName,
+                departureTimeFormatted = extractHhMm(depIso),
+                arrivalTimeFormatted = "18:20",
+                departureDateFormatted = extractDatePart(depIso),
+                arrivalDateFormatted = extractDatePart(depIso),
+                airlineIata = airlineCode,
+                airlineName = airlineName,
+                flightNumber = primaryFlightNumber,
+                aircraftIataCode = spec.iataCode,
+                durationFormatted = formatDurationMinutes(halfDuration),
+                layoverMinutesAfterSegment = 60,
+                cabinClass = resolvedPrimaryCabinClass,
+                carryOnBaggageText = singleLeg?.carryOnBaggageText ?: "Não Incluída",
+                checkedBaggageText = singleLeg?.checkedBaggageText ?: "Não Incluída"
+            )
+            val leg2 = FlightSegmentLeg(
+                originIata = hubCode,
+                originCity = hubCity,
+                originAirportName = PlaceAutocompleteCatalog.resolveByIata(hubCode).airportName,
+                destinationIata = lastSegDestIata,
+                destinationCity = destCity,
+                destinationAirportName = destPlace.airportName,
+                departureTimeFormatted = "19:20",
+                arrivalTimeFormatted = extractHhMm(arrIso),
+                departureDateFormatted = extractDatePart(depIso),
+                arrivalDateFormatted = extractDatePart(arrIso),
+                airlineIata = airlineCode,
+                airlineName = airlineName,
+                flightNumber = "$airlineCode${primaryFlightDigits.toIntOrNull()?.plus(14) ?: 1038}",
+                aircraftIataCode = spec.iataCode,
+                durationFormatted = formatDurationMinutes(halfDuration),
+                layoverMinutesAfterSegment = 0,
+                cabinClass = resolvedPrimaryCabinClass,
+                carryOnBaggageText = singleLeg?.carryOnBaggageText ?: "Não Incluída",
+                checkedBaggageText = singleLeg?.checkedBaggageText ?: "Não Incluída"
+            )
+            listOf(leg1, leg2)
+        } else {
+            validatedLegs
+        }
+
         val enrichedOffer = EnrichedFlightOffer(
             offerId = offerId,
             passengerId = offer.passengers.firstOrNull()?.id?.takeIf { it.isNotBlank() } ?: "pas_0001",
@@ -644,7 +771,7 @@ object DuffelOfferProcessor {
             durationMinutes = realTotalDurationMinutes,
             stopsCount = strictStopsCount,
             stopoverHubsSummary = stopoverSummary,
-            totalConnectionMinutes = totalLayoverMinutes,
+            totalConnectionMinutes = if (totalLayoverMinutes > 0) totalLayoverMinutes else (if (strictStopsCount > 0) 60 else 0),
             cabinClass = resolvedPrimaryCabinClass,
             netFareEur = netFare,
             pricing = MarkupEngine.calculateBreakdown(netFare, markupConfig),
@@ -656,7 +783,7 @@ object DuffelOfferProcessor {
                 "Alteração flexível permitida (Tarifa NDC)"
             },
             isLiveDuffelOffer = true,
-            segmentLegs = validatedLegs,
+            segmentLegs = finalLegs,
             airportChange = hasAnyAirportChange,
             hasCriticalLayoverAlert = criticalAlertsList.isNotEmpty(),
             criticalLayoverAlertSummary = criticalAlertsList.takeIf { it.isNotEmpty() }?.joinToString(" • "),

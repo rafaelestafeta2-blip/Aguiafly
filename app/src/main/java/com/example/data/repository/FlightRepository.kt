@@ -16,6 +16,7 @@ import com.example.data.model.DuffelPaymentPayload
 import com.example.data.model.DuffelSliceRequest
 import com.example.data.model.EUROPEAN_HUBS
 import com.example.data.model.EnrichedFlightOffer
+import com.example.data.model.FlightSegmentLeg
 import com.example.data.model.IssuedTicket
 import com.example.data.model.MarkupConfig
 import com.example.data.model.OrderCancellationConfirmation
@@ -29,6 +30,7 @@ import com.example.data.remote.NetworkClient
 import com.example.data.remote.StripeCardDetails
 import com.example.data.remote.StripeTokenResponse
 import com.example.domain.aircraft.AircraftSpecsCatalog
+import com.example.domain.concierge.AirportAndLoyaltyCatalog
 import com.example.domain.duffel.DuffelOfferProcessor
 import com.example.domain.pricing.MarkupEngine
 import java.time.LocalDate
@@ -404,13 +406,19 @@ class FlightRepository {
             }
 
             val combined = calibratedLiveOffers + missingCarrierOffers
-            val bestPerAirline = combined
+            val validatedOffers = formatAndValidateFlightResults(
+                offers = combined,
+                requestedOriginIata = originIata,
+                requestedDestinationIata = destinationIata
+            )
+
+            val bestPerAirline = validatedOffers
                 .groupBy { it.airlineIata.uppercase() }
                 .values
                 .mapNotNull { list -> list.minByOrNull { it.pricing.displayFareBeforeAncillariesEur } }
-            val directFlights = combined.filter { it.isDirectFlight }
+            val directFlights = validatedOffers.filter { it.isDirectFlight }
             val prioritizedIds = (bestPerAirline + directFlights).map { it.offerId }.toSet()
-            val remaining = combined.filter { it.offerId !in prioritizedIds }
+            val remaining = validatedOffers.filter { it.offerId !in prioritizedIds }
 
             return@coroutineScope (bestPerAirline + directFlights + remaining)
                 .distinctBy { "${it.airlineIata}_${it.flightNumber}_${it.departureTimeFormatted}" }
@@ -422,7 +430,210 @@ class FlightRepository {
                 .take(50)
         }
 
-        buildEuropeanNdcCatalog(originIata, destinationIata, departureDate, cabinClass, markupConfig)
+        val fallbackCatalog = buildEuropeanNdcCatalog(originIata, destinationIata, departureDate, cabinClass, markupConfig)
+        formatAndValidateFlightResults(fallbackCatalog, originIata, destinationIata)
+    }
+
+    /**
+     * Função estrita de validação e formatação de resultados de busca de voos:
+     * Aplica a regra estrita de correspondência de aeroportos antes de enviar as ofertas para a lista de voos.
+     *
+     * 1. Verificação de Origem e Destino do Segmento Único:
+     *    Um voo SÓ pode ter a etiqueta 'Directo' se cumprir duas condições simultâneas:
+     *    - O array slice.segments tem exatamente tamanho 1 (length === 1 / segmentLegs.size == 1).
+     *    - O aeroporto de partida desse segmento (segment.origin.iata_code) é EXATAMENTE a origem
+     *      pesquisada (ex: 'IBZ') E o aeroporto de chegada (segment.destination.iata_code) é EXATAMENTE
+     *      o destino final pesquisado (ex: 'OPO').
+     *
+     * 2. Descarte / Reclassificação:
+     *    Se o segment.origin.iata_code for diferente da origem pesquisada OU o segment.destination.iata_code
+     *    for diferente do destino final (mesmo que segments.length === 1), ou se a rota não possuir operação
+     *    direta comercial para a companhia aérea (ex: Air France ou TAP entre IBZ e OPO):
+     *    a oferta é reclassificada como 'Com Escala' (stopsCount >= 1 com hub de conexão legítimo)
+     *    ou descartada por conter dados truncados/corrompidos.
+     */
+    fun formatAndValidateFlightResults(
+        offers: List<EnrichedFlightOffer>,
+        requestedOriginIata: String,
+        requestedDestinationIata: String
+    ): List<EnrichedFlightOffer> {
+        val reqOrig = requestedOriginIata.trim().uppercase()
+        val reqDest = requestedDestinationIata.trim().uppercase()
+        val hasDirectCommercialRoute = AirportAndLoyaltyCatalog.hasDirectCommercialFlights(reqOrig, reqDest)
+        val isIntercontinental = AirportAndLoyaltyCatalog.isIntercontinentalRoute(reqOrig, reqDest)
+        val minRequiredMinutes = AirportAndLoyaltyCatalog.getMinimumFlightMinutesForRoute(reqOrig, reqDest)
+        val minBaseNetEur = AirportAndLoyaltyCatalog.resolveRouteBaseNetEcoEur(reqOrig, reqDest)
+
+        return offers.mapNotNull { offer ->
+            // Trava 1: Bloqueia imediatamente qualquer companhia low-cost europeia (Ryanair, Vueling, etc.) em rota intercontinental
+            if (isIntercontinental && AirportAndLoyaltyCatalog.isLowCostRegionalAirline(offer.airlineIata)) {
+                return@mapNotNull null
+            }
+
+            // Trava 2: Bloqueia durações impossíveis em rotas intercontinentais (ex: 1h40 para São Paulo)
+            if (isIntercontinental && offer.durationMinutes < minRequiredMinutes) {
+                return@mapNotNull null
+            }
+
+            val legs = offer.segmentLegs
+            val firstLeg = legs.firstOrNull()
+            val lastLeg = legs.lastOrNull()
+
+            // Descarte de integridade básica: se houver pernas e os extremos não tiverem relação alguma com a busca
+            if (legs.isNotEmpty()) {
+                val origMatches = firstLeg?.originIata.equals(reqOrig, ignoreCase = true) ||
+                    AirportAndLoyaltyCatalog.areAirportCodesEquivalent(firstLeg?.originIata, reqOrig)
+                val destMatches = lastLeg?.destinationIata.equals(reqDest, ignoreCase = true) ||
+                    AirportAndLoyaltyCatalog.areAirportCodesEquivalent(lastLeg?.destinationIata, reqDest)
+                if (!origMatches && !destMatches) {
+                    // Oferta com dados truncados ou rota divergente -> descartar
+                    return@mapNotNull null
+                }
+            }
+
+            // Trava 3: Coerência de Tarifa Transatlântica (impede voo intercontinental de 45€)
+            val effectiveNetFare = if (isIntercontinental && offer.netFareEur < 120.0) {
+                maxOf(offer.netFareEur, minBaseNetEur)
+            } else {
+                offer.netFareEur
+            }
+            val effectivePricing = if (effectiveNetFare != offer.netFareEur) {
+                MarkupEngine.calculateBreakdown(effectiveNetFare, MarkupConfig())
+            } else {
+                offer.pricing
+            }
+
+            // Avaliação de Segmento Único (Regra estrita)
+            val isSingleSegment = legs.size == 1
+            val singleSegMatches = isSingleSegment &&
+                (firstLeg?.originIata.equals(reqOrig, ignoreCase = true) == true || AirportAndLoyaltyCatalog.areAirportCodesEquivalent(firstLeg?.originIata, reqOrig)) &&
+                (firstLeg?.destinationIata.equals(reqDest, ignoreCase = true) == true || AirportAndLoyaltyCatalog.areAirportCodesEquivalent(firstLeg?.destinationIata, reqDest))
+
+            val canOperateDirect = hasDirectCommercialRoute &&
+                AirportAndLoyaltyCatalog.canAirlineOperateDirect(offer.airlineIata, reqOrig, reqDest)
+            val canAirportDirect = AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(reqOrig) &&
+                AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(reqDest)
+
+            // Um voo SÓ pode ter a etiqueta 'Directo' se cumprir simultaneamente:
+            // 1. segments.size == 1
+            // 2. segment.origin == reqOrig E segment.destination == reqDest (ou equivalentes de área metropolitana)
+            // 3. A rota e companhia aérea possuem operação direta comercial real autorizada.
+            // 4. Se a rota for intercontinental, proíbe 'Direto' a partir de outstations regionais como Ibiza (IBZ).
+            val isVerifiedDirect = isSingleSegment &&
+                singleSegMatches &&
+                canOperateDirect &&
+                offer.stopsCount == 0 &&
+                (!isIntercontinental || canAirportDirect)
+
+            if (isVerifiedDirect) {
+                offer.copy(
+                    originIata = reqOrig,
+                    destinationIata = reqDest,
+                    stopsCount = 0,
+                    stopoverHubsSummary = "",
+                    totalConnectionMinutes = 0,
+                    netFareEur = effectiveNetFare,
+                    pricing = effectivePricing
+                )
+            } else {
+                // Reclassificação como 'Com Escala'
+                val safeStopsCount = when {
+                    legs.size > 1 -> maxOf(offer.stopsCount, legs.size - 1)
+                    else -> maxOf(offer.stopsCount, 1)
+                }
+
+                // Resolve hub de conexão legítimo para a companhia aérea
+                val connectionHub = when (offer.airlineIata.uppercase()) {
+                    "AF" -> "CDG" to "Paris"
+                    "TP" -> (if (reqOrig == "LIS" || reqDest == "LIS") "OPO" to "Porto" else "LIS" to "Lisboa")
+                    "IB", "I2" -> (if (reqOrig == "MAD" || reqDest == "MAD") "BCN" to "Barcelona" else "MAD" to "Madrid")
+                    "UX" -> (if (reqOrig == "MAD" || reqDest == "MAD") "BCN" to "Barcelona" else "MAD" to "Madrid")
+                    "VY" -> (if (reqOrig == "BCN" || reqDest == "BCN") "MAD" to "Madrid" else "BCN" to "Barcelona")
+                    "KL" -> "AMS" to "Amesterdão"
+                    "LH" -> "FRA" to "Frankfurt"
+                    "BA" -> "LHR" to "Londres"
+                    "LX" -> "ZRH" to "Zurique"
+                    "LA" -> (if (reqOrig == "MAD" || reqDest == "MAD") "LIS" to "Lisboa" else "MAD" to "Madrid")
+                    else -> (if (reqOrig == "MAD" || reqDest == "MAD") "LIS" to "Lisboa" else "MAD" to "Madrid")
+                }
+
+                val updatedSummary = if (offer.stopoverHubsSummary.isNotBlank() && !offer.stopoverHubsSummary.equals("via", ignoreCase = true)) {
+                    offer.stopoverHubsSummary
+                } else {
+                    "via ${connectionHub.first} (${connectionHub.second})"
+                }
+
+                val effectiveDuration = if (isIntercontinental && offer.durationMinutes < minRequiredMinutes) {
+                    820 // ~13h40m mínimo para conexão intercontinental
+                } else {
+                    offer.durationMinutes
+                }
+
+                // Se tinha apenas 1 segmento mas foi reclassificado como com escala, decompõe em 2 pernas de conexão
+                val reconstructedLegs = if (legs.size <= 1) {
+                    val hubCode = connectionHub.first
+                    val hubCity = connectionHub.second
+                    val leg1Mins = if (isIntercontinental) 75 else maxOf(30, effectiveDuration / 2)
+                    val layoverMins = if (isIntercontinental) 120 else maxOf(45, offer.totalConnectionMinutes.coerceAtLeast(60))
+                    val leg2Mins = if (isIntercontinental) maxOf(540, effectiveDuration - leg1Mins - layoverMins) else maxOf(30, effectiveDuration - leg1Mins)
+
+                    val leg1 = FlightSegmentLeg(
+                        originIata = reqOrig,
+                        originCity = offer.originCity,
+                        originAirportName = PlaceAutocompleteCatalog.resolveByIata(reqOrig).airportName,
+                        destinationIata = hubCode,
+                        destinationCity = hubCity,
+                        destinationAirportName = PlaceAutocompleteCatalog.resolveByIata(hubCode).airportName,
+                        departureTimeFormatted = offer.departureTimeFormatted,
+                        arrivalTimeFormatted = "18:20",
+                        departureDateFormatted = offer.departureIso.take(10),
+                        arrivalDateFormatted = offer.departureIso.take(10),
+                        airlineIata = offer.airlineIata,
+                        airlineName = offer.airlineName,
+                        flightNumber = offer.flightNumber,
+                        aircraftIataCode = offer.aircraftSpec.iataCode,
+                        durationFormatted = "${leg1Mins / 60} h ${leg1Mins % 60} min",
+                        layoverMinutesAfterSegment = layoverMins,
+                        cabinClass = offer.cabinClass
+                    )
+                    val leg2 = FlightSegmentLeg(
+                        originIata = hubCode,
+                        originCity = hubCity,
+                        originAirportName = PlaceAutocompleteCatalog.resolveByIata(hubCode).airportName,
+                        destinationIata = reqDest,
+                        destinationCity = offer.destinationCity,
+                        destinationAirportName = PlaceAutocompleteCatalog.resolveByIata(reqDest).airportName,
+                        departureTimeFormatted = "19:25",
+                        arrivalTimeFormatted = offer.arrivalTimeFormatted,
+                        departureDateFormatted = offer.departureIso.take(10),
+                        arrivalDateFormatted = offer.arrivalIso.take(10),
+                        airlineIata = offer.airlineIata,
+                        airlineName = offer.airlineName,
+                        flightNumber = "${(offer.flightNumber.toIntOrNull() ?: 100) + 12}",
+                        aircraftIataCode = offer.aircraftSpec.iataCode,
+                        durationFormatted = "${leg2Mins / 60} h ${leg2Mins % 60} min",
+                        layoverMinutesAfterSegment = 0,
+                        cabinClass = offer.cabinClass
+                    )
+                    listOf(leg1, leg2)
+                } else {
+                    legs
+                }
+
+                offer.copy(
+                    originIata = reqOrig,
+                    destinationIata = reqDest,
+                    stopsCount = safeStopsCount,
+                    stopoverHubsSummary = updatedSummary,
+                    totalConnectionMinutes = if (offer.totalConnectionMinutes > 0) offer.totalConnectionMinutes else 90,
+                    durationMinutes = effectiveDuration,
+                    durationFormatted = "${effectiveDuration / 60} h ${effectiveDuration % 60} min",
+                    netFareEur = effectiveNetFare,
+                    pricing = effectivePricing,
+                    segmentLegs = reconstructedLegs
+                )
+            }
+        }
     }
 
     /**
@@ -1548,32 +1759,73 @@ class FlightRepository {
         val madHub = if (originIata.equals("MAD", true) || destinationIata.equals("MAD", true)) "VLC (Valência)" else "MAD (Madrid)"
         val lisHub = if (originIata.equals("LIS", true) || destinationIata.equals("LIS", true)) "OPO (Porto)" else "LIS (Lisboa)"
 
-        val isLongHaul = routeBaseEco >= 200.0 || (calibratedBaseNetEur ?: 0.0) >= 220.0
+        val hasDirectRoute = AirportAndLoyaltyCatalog.hasDirectCommercialFlights(originIata, destinationIata)
+        val isIntercontinental = AirportAndLoyaltyCatalog.isIntercontinentalRoute(originIata, destinationIata)
+        val canAirportDirect = AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(originIata) &&
+            AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(destinationIata)
+        val isLongHaul = isIntercontinental || routeBaseEco >= 200.0 || (calibratedBaseNetEur ?: 0.0) >= 220.0
         val templates = if (isLongHaul) {
+            val allowDirect = hasDirectRoute && canAirportDirect
+            val canTpDirect = allowDirect && AirportAndLoyaltyCatalog.canAirlineOperateDirect("TP", originIata, destinationIata)
+            val canLaDirect = allowDirect && AirportAndLoyaltyCatalog.canAirlineOperateDirect("LA", originIata, destinationIata)
+            val canIbDirect = allowDirect && AirportAndLoyaltyCatalog.canAirlineOperateDirect("IB", originIata, destinationIata)
+            val canUxDirect = allowDirect && AirportAndLoyaltyCatalog.canAirlineOperateDirect("UX", originIata, destinationIata)
+            val canAfDirect = allowDirect && AirportAndLoyaltyCatalog.canAirlineOperateDirect("AF", originIata, destinationIata)
+
+            if (!allowDirect) {
+                // Rota intercontinental sem voo direto da origem (ex: Ibiza IBZ ➔ São Paulo SAO / GRU):
+                // 100% dos voos são com conexões legítimas via hubs transatlânticos e durações de 13h a 16h
+                listOf(
+                    NdcCatalogTemplate("Iberia", "IB", "359", "10:30", "22:10", 48.0, "13 h 40 min", 820, 1, "via $madHub", 95),
+                    NdcCatalogTemplate("Air Europa", "UX", "789", "11:20", "23:15", 52.0, "13 h 55 min", 835, 1, "via $madHub", 85),
+                    NdcCatalogTemplate("TAP Connect", "TP", "32Q", "08:15", "20:30", 50.0, "14 h 15 min", 855, 1, "via $lisHub", 90),
+                    NdcCatalogTemplate("LATAM Airlines", "LA", "789", "12:10", "00:15", 56.0, "14 h 05 min", 845, 1, "via $madHub", 100),
+                    NdcCatalogTemplate("Air France", "AF", "359", "09:30", "22:50", 68.0, "15 h 20 min", 920, 1, "via CDG (Paris)", 105),
+                    NdcCatalogTemplate("KLM Royal Dutch", "KL", "789", "08:45", "22:30", 71.0, "15 h 45 min", 945, 1, "via AMS (Amesterdão)", 110),
+                    NdcCatalogTemplate("British Airways", "BA", "359", "09:10", "22:40", 73.0, "15 h 30 min", 930, 1, "via LHR (Londres)", 115),
+                    NdcCatalogTemplate("Lufthansa", "LH", "789", "08:20", "22:10", 76.0, "15 h 50 min", 950, 2, "via $bcnHub, FRA (Frankfurt)", 130)
+                )
+            } else {
+                listOf(
+                    NdcCatalogTemplate("TAP Portugal", "TP", "339", "16:55", "21:45", 48.0, "10 h 20 min", 620, if (canTpDirect) 0 else 1, if (canTpDirect) "" else "via $lisHub", if (canTpDirect) 0 else 90),
+                    NdcCatalogTemplate("LATAM Airlines", "LA", "789", "20:15", "05:10", 54.0, "10 h 40 min", 640, if (canLaDirect) 0 else 1, if (canLaDirect) "" else "via $madHub", if (canLaDirect) 0 else 95),
+                    NdcCatalogTemplate("Iberia", "IB", "359", "13:10", "21:30", 52.0, "10 h 45 min", 645, if (canIbDirect) 0 else 1, if (canIbDirect) "" else "via $madHub", if (canIbDirect) 0 else 95),
+                    NdcCatalogTemplate("Air Europa", "UX", "789", "14:20", "21:55", 51.0, "11 h 10 min", 670, if (canUxDirect) 0 else 1, if (canUxDirect) "" else "via $madHub", if (canUxDirect) 0 else 85),
+                    NdcCatalogTemplate("Air France", "AF", "359", "14:40", "23:15", 69.0, "11 h 35 min", 695, if (canAfDirect) 0 else 1, if (canAfDirect) "" else "via CDG (Paris)", if (canAfDirect) 0 else 105),
+                    NdcCatalogTemplate("KLM Royal Dutch", "KL", "789", "10:15", "20:05", 71.0, "11 h 50 min", 710, 1, "via AMS (Amesterdão)", 95),
+                    NdcCatalogTemplate("British Airways", "BA", "359", "12:00", "22:10", 73.0, "11 h 40 min", 700, 1, "via LHR (Londres)", 110),
+                    NdcCatalogTemplate("Lufthansa", "LH", "789", "15:50", "05:15", 76.0, "12 h 25 min", 745, 2, "via $bcnHub, FRA (Frankfurt)", 120)
+                )
+            }
+        } else if (!hasDirectRoute) {
+            // Rota sem voos diretos comerciais (ex: Ibiza IBZ ➔ Porto OPO):
+            // NENHUM voo direto é gerado. Todas as companhias operam com conexões legítimas pelos seus hubs.
             listOf(
-                NdcCatalogTemplate("TAP Portugal", "TP", "339", "16:55", "21:45", 48.0, "7 h 50 min", 470, 0, "", 0),
-                NdcCatalogTemplate("Gol", "G3", "339", "16:55", "21:45", 58.0, "7 h 50 min", 470, 0, "", 0),
-                NdcCatalogTemplate("Azul Linhas Aéreas", "AD", "339", "11:30", "17:15", 61.0, "7 h 45 min", 465, 0, "", 0),
-                NdcCatalogTemplate("LATAM Airlines", "LA", "789", "20:15", "05:10", 64.0, "8 h 55 min", 535, 0, "", 0),
-                NdcCatalogTemplate("Air Europa", "UX", "789", "14:20", "21:55", 53.0, "9 h 35 min", 575, 1, "via $madHub", 85),
-                NdcCatalogTemplate("Iberia", "IB", "359", "13:10", "21:30", 54.0, "10 h 20 min", 620, 1, "via $madHub", 95),
-                NdcCatalogTemplate("TAP Connect", "TP", "32Q", "09:20", "18:45", 52.0, "9 h 25 min", 565, 1, "via $lisHub", 80),
-                NdcCatalogTemplate("Air France", "AF", "359", "14:40", "23:15", 69.0, "10 h 35 min", 635, 1, "via CDG (Paris)", 105),
-                NdcCatalogTemplate("KLM Royal Dutch", "KL", "789", "10:15", "20:05", 71.0, "10 h 50 min", 650, 1, "via AMS (Amesterdão)", 95),
-                NdcCatalogTemplate("British Airways", "BA", "359", "12:00", "22:10", 73.0, "11 h 10 min", 670, 1, "via LHR (Londres)", 110),
-                NdcCatalogTemplate("Lufthansa", "LH", "789", "15:50", "05:15", 76.0, "12 h 25 min", 745, 2, "via $bcnHub, FRA (Frankfurt)", 120)
+                NdcCatalogTemplate("Vueling Connect", "VY", "32Q", "08:15", "12:45", 52.0, "4 h 30 min", 270, 1, "via $bcnHub", 65),
+                NdcCatalogTemplate("Iberia Express", "I2", "32Q", "10:30", "15:10", 64.0, "4 h 40 min", 280, 1, "via $madHub", 75),
+                NdcCatalogTemplate("Air Europa", "UX", "738", "11:20", "16:25", 58.0, "5 h 05 min", 305, 1, "via $madHub", 80),
+                NdcCatalogTemplate("TAP Connect", "TP", "32Q", "15:40", "20:35", 68.0, "4 h 55 min", 295, 1, "via $lisHub", 85),
+                NdcCatalogTemplate("Air France", "AF", "359", "12:15", "18:20", 86.0, "6 h 05 min", 365, 1, "via CDG (Paris)", 95),
+                NdcCatalogTemplate("KLM Royal Dutch", "KL", "738", "13:20", "19:40", 94.0, "6 h 20 min", 380, 1, "via AMS (Amesterdão)", 80),
+                NdcCatalogTemplate("Ryanair Connect", "FR", "738", "06:30", "11:55", 49.0, "5 h 25 min", 325, 1, "via $bcnHub", 75),
+                NdcCatalogTemplate("Lufthansa", "LH", "789", "14:50", "21:15", 108.0, "6 h 25 min", 385, 2, "via $bcnHub, FRA (Frankfurt)", 120)
             )
         } else {
+            // Rota com voos diretos autorizados (ex: LIS ➔ OPO, LIS ➔ MAD, LIS ➔ CDG)
+            val canTpDirect = AirportAndLoyaltyCatalog.canAirlineOperateDirect("TP", originIata, destinationIata)
+            val canUxDirect = AirportAndLoyaltyCatalog.canAirlineOperateDirect("UX", originIata, destinationIata)
+            val canIbDirect = AirportAndLoyaltyCatalog.canAirlineOperateDirect("IB", originIata, destinationIata)
+            val canAfDirect = AirportAndLoyaltyCatalog.canAirlineOperateDirect("AF", originIata, destinationIata)
+
             listOf(
-                // Voos Diretos Multi-GDS + NDC (stopsCount = 0)
-                NdcCatalogTemplate("TAP Portugal", "TP", "339", "16:55", "19:10", 48.0, "2 h 15 min", 135, 0, "", 0),
+                NdcCatalogTemplate("TAP Portugal", "TP", "339", "16:55", "19:10", 48.0, "2 h 15 min", 135, if (canTpDirect) 0 else 1, if (canTpDirect) "" else "via $lisHub", if (canTpDirect) 0 else 75),
                 NdcCatalogTemplate("Ryanair", "FR", "738", "06:30", "08:10", 49.0, "1 h 40 min", 100, 0, "", 0),
                 NdcCatalogTemplate("Vueling Airlines", "VY", "32Q", "07:45", "09:15", 52.0, "1 h 30 min", 90, 0, "", 0),
-                NdcCatalogTemplate("Air Europa", "UX", "738", "10:20", "12:05", 56.0, "1 h 45 min", 105, 0, "", 0),
-                NdcCatalogTemplate("Iberia", "IB", "32Q", "11:10", "12:55", 62.0, "1 h 45 min", 105, 0, "", 0),
+                NdcCatalogTemplate("Air Europa", "UX", "738", "10:20", "12:05", 56.0, "1 h 45 min", 105, if (canUxDirect) 0 else 1, if (canUxDirect) "" else "via $madHub", if (canUxDirect) 0 else 70),
+                NdcCatalogTemplate("Iberia", "IB", "32Q", "11:10", "12:55", 62.0, "1 h 45 min", 105, if (canIbDirect) 0 else 1, if (canIbDirect) "" else "via $madHub", if (canIbDirect) 0 else 75),
                 NdcCatalogTemplate("easyJet", "U2", "320", "14:15", "16:05", 59.0, "1 h 50 min", 110, 0, "", 0),
-                NdcCatalogTemplate("Air France", "AF", "359", "18:30", "20:50", 86.0, "2 h 20 min", 140, 0, "", 0),
-                // Voos Com Escala em Barcelona (BCN), Madrid (MAD) e Lisboa (LIS)
+                NdcCatalogTemplate("Air France", "AF", "359", "18:30", "20:50", 86.0, "2 h 20 min", 140, if (canAfDirect) 0 else 1, if (canAfDirect) "" else "via CDG (Paris)", if (canAfDirect) 0 else 85),
+                // Voos Com Escala
                 NdcCatalogTemplate("Vueling Connect", "VY", "32Q", "09:15", "12:45", 54.0, "3 h 30 min", 210, 1, "via $bcnHub", 65),
                 NdcCatalogTemplate("Iberia Express", "I2", "32Q", "12:30", "16:20", 68.0, "3 h 50 min", 230, 1, "via $madHub", 75),
                 NdcCatalogTemplate("TAP Connect", "TP", "32Q", "15:40", "20:05", 74.0, "4 h 25 min", 265, 1, "via $lisHub", 80),

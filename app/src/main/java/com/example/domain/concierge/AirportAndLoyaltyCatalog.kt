@@ -43,28 +43,288 @@ object AirportAndLoyaltyCatalog {
      * priorizando o valor real calibrado pela API para a rota e garantindo consistência 100% exata
      * entre o Calendário de Tarifas e a lista de voos.
      */
+    enum class WorldRegion {
+        EUROPE,
+        SOUTH_AMERICA,
+        NORTH_AMERICA,
+        MIDDLE_EAST,
+        ASIA,
+        AFRICA,
+        OCEANIA,
+        UNKNOWN
+    }
+
+    val METRO_AIRPORT_MAPPING: Map<String, Set<String>> = mapOf(
+        "SAO" to setOf("GRU", "CGH", "VCP", "SAO"),
+        "RIO" to setOf("GIG", "SDU", "RIO"),
+        "BHZ" to setOf("CNF", "PLU", "BHZ"),
+        "BUE" to setOf("EZE", "AEP", "BUE"),
+        "LON" to setOf("LHR", "LGW", "STN", "LTN", "LCY", "SEN", "LON"),
+        "PAR" to setOf("CDG", "ORY", "BVA", "PAR"),
+        "NYC" to setOf("JFK", "EWR", "LGA", "NYC"),
+        "WAS" to setOf("IAD", "DCA", "BWI", "WAS"),
+        "CHI" to setOf("ORD", "MDW", "CHI"),
+        "MIA_METRO" to setOf("MIA", "FLL"),
+        "ROM" to setOf("FCO", "CIA", "ROM"),
+        "MIL" to setOf("MXP", "LIN", "BGY", "MIL"),
+        "TYO" to setOf("NRT", "HND", "TYO")
+    )
+
+    fun areAirportCodesEquivalent(code1: String?, code2: String?): Boolean {
+        if (code1 == null || code2 == null) return false
+        val c1 = code1.trim().uppercase()
+        val c2 = code2.trim().uppercase()
+        if (c1 == c2) return true
+        METRO_AIRPORT_MAPPING.values.forEach { group ->
+            if (c1 in group && c2 in group) return true
+        }
+        return false
+    }
+
+    fun resolveWorldRegion(iataCode: String): WorldRegion {
+        val code = iataCode.trim().uppercase()
+        val southAmerica = setOf(
+            "SAO", "GRU", "CGH", "VCP", "RIO", "GIG", "SDU", "BSB", "CNF", "BHZ", "PLU",
+            "SSA", "REC", "FOR", "POA", "CWB", "BEL", "MAO", "FLN", "NAT", "MCZ", "VIX",
+            "CGB", "GYN", "IGU", "EZE", "AEP", "BUE", "SCL", "BOG", "LIM", "MVD", "ASU"
+        )
+        val northAmerica = setOf(
+            "NYC", "JFK", "EWR", "LGA", "MIA", "MCO", "FLL", "BOS", "IAD", "DCA", "BWI", "WAS",
+            "ORD", "MDW", "CHI", "LAX", "SFO", "SEA", "ATL", "DFW", "IAH", "LAS", "YUL", "YYZ", "YVR", "MEX", "CUN"
+        )
+        val middleEast = setOf("DXB", "DOH", "AUH", "RUH", "JED", "IST", "SAW")
+        val asia = setOf("NRT", "HND", "TYO", "KIX", "ICN", "SIN", "BKK", "HKG", "PVG", "PEK")
+        val africa = setOf("CAI", "CPT", "JNB", "CMN", "RAK", "SID", "BVC", "RAI", "VXE")
+        val europe = setOf(
+            "LIS", "OPO", "FAO", "FNC", "PDL", "TER", "MAD", "BCN", "IBZ", "PMI", "MAH", "AGP",
+            "VLC", "ALC", "SVQ", "BIO", "SCQ", "OVD", "SDR", "TFS", "TFN", "LPA", "ACE", "FUE",
+            "CDG", "ORY", "BVA", "PAR", "NCE", "LYS", "MRS", "TLS", "BOD", "LHR", "LGW", "STN",
+            "LTN", "LCY", "SEN", "LON", "MAN", "EDI", "BHX", "DUB", "FCO", "CIA", "ROM", "MXP",
+            "LIN", "BGY", "MIL", "VCE", "NAP", "BLQ", "CTA", "PMO", "FRA", "MUC", "BER", "HAM",
+            "DUS", "STR", "VIE", "ZRH", "GVA", "BSL", "AMS", "BRU", "CRL", "EIN", "CPH", "ARN",
+            "OSL", "HEL", "WAW", "PRG", "BUD", "ATH", "SKG"
+        )
+
+        return when {
+            code in southAmerica -> WorldRegion.SOUTH_AMERICA
+            code in northAmerica -> WorldRegion.NORTH_AMERICA
+            code in middleEast -> WorldRegion.MIDDLE_EAST
+            code in asia -> WorldRegion.ASIA
+            code in africa -> WorldRegion.AFRICA
+            code in europe -> WorldRegion.EUROPE
+            else -> WorldRegion.UNKNOWN
+        }
+    }
+
+    fun isIntercontinentalRoute(originIata: String, destinationIata: String): Boolean {
+        val origRegion = resolveWorldRegion(originIata)
+        val destRegion = resolveWorldRegion(destinationIata)
+        if (origRegion == WorldRegion.UNKNOWN || destRegion == WorldRegion.UNKNOWN) {
+            val nonEuropean = setOf(
+                "SAO", "GRU", "CGH", "VCP", "RIO", "GIG", "SDU", "BSB", "CNF", "SSA", "REC", "FOR",
+                "JFK", "MIA", "MCO", "DXB", "EZE", "SCL", "BOG", "NYC", "BUE"
+            )
+            return originIata.uppercase() in nonEuropean || destinationIata.uppercase() in nonEuropean
+        }
+        return origRegion != destRegion
+    }
+
+    /**
+     * Duração mínima aceitável (em minutos) para a rota considerando a física aeronáutica e geografia.
+     * Europa <-> América do Sul: pelo menos 9h30m (570 min).
+     * Europa <-> América do Norte: pelo menos 7h30m (450 min).
+     */
+    fun getMinimumFlightMinutesForRoute(originIata: String, destinationIata: String): Int {
+        val origRegion = resolveWorldRegion(originIata)
+        val destRegion = resolveWorldRegion(destinationIata)
+        val isEuropeSouthAmerica = (origRegion == WorldRegion.EUROPE && destRegion == WorldRegion.SOUTH_AMERICA) ||
+            (origRegion == WorldRegion.SOUTH_AMERICA && destRegion == WorldRegion.EUROPE)
+        if (isEuropeSouthAmerica) {
+            return 570 // 9 horas e 30 minutos mínimo
+        }
+        val isEuropeNorthAmerica = (origRegion == WorldRegion.EUROPE && destRegion == WorldRegion.NORTH_AMERICA) ||
+            (origRegion == WorldRegion.NORTH_AMERICA && destRegion == WorldRegion.EUROPE)
+        if (isEuropeNorthAmerica) {
+            return 450 // 7 horas e 30 minutos mínimo
+        }
+        if (isIntercontinentalRoute(originIata, destinationIata)) {
+            return 420 // 7 horas mínimo
+        }
+        return 35 // Voo intra-Europa
+    }
+
+    /**
+     * Companhias low-cost europeias estritamente regionais / ponto-a-ponto de curto curso.
+     * NUNCA operam rotas intercontinentais (transatlânticas).
+     */
+    val EUROPEAN_LOW_COST_CARRIERS: Set<String> = setOf(
+        "FR", // Ryanair
+        "VY", // Vueling
+        "U2", // easyJet
+        "W6", // Wizz Air
+        "TO", // Transavia France
+        "HV", // Transavia
+        "V7", // Volotea
+        "EW", // Eurowings
+        "I2"  // Iberia Express
+    )
+
+    fun isLowCostRegionalAirline(airlineIata: String): Boolean {
+        return airlineIata.trim().uppercase() in EUROPEAN_LOW_COST_CARRIERS
+    }
+
+    /**
+     * Aeroportos de ilhas ou cidades secundárias sem capacidade ou autorização para voos intercontinentais diretos.
+     * Ex: Ibiza (IBZ), Menorca (MAH), Faro (FAO) NÃO possuem voos diretos para América do Sul, EUA ou Ásia.
+     */
+    val REGIONAL_OUTSTATIONS_NO_LONGHAUL_DIRECT: Set<String> = setOf(
+        "IBZ", "PMI", "MAH", "VLC", "ALC", "AGP", "SVQ", "BIO", "FAO", "FNC", "PDL", "ORY", "BVA", "LIN", "BGY", "VCE"
+    )
+
+    fun canAirportHaveDirectLongHaul(originIata: String): Boolean {
+        return originIata.trim().uppercase() !in REGIONAL_OUTSTATIONS_NO_LONGHAUL_DIRECT
+    }
+
+    /**
+     * Retorna a tarifa base neta (Economy) de referência para qualquer par de aeroportos,
+     * priorizando o valor real calibrado pela API para a rota e garantindo consistência 100% exata
+     * entre o Calendário de Tarifas e a lista de voos.
+     */
     fun resolveRouteBaseNetEcoEur(originIata: String, destinationIata: String): Double {
         val orig = originIata.trim().uppercase()
         val dest = destinationIata.trim().uppercase()
-        if (orig == dest) return 48.0
+        if (areAirportCodesEquivalent(orig, dest)) return 48.0
         val key = "${orig}_${dest}"
         liveCalibratedRouteBaseEcoMap[key]?.let { return it }
 
-        val brazilAirports = setOf("GRU", "GIG", "VCP", "CGH", "BSB", "CNF", "SSA", "REC", "FOR", "POA", "CWB", "BEL", "MAO")
-        val longHaulIntl = setOf("JFK", "MIA", "MCO", "LAX", "DXB", "EZE", "SCL", "BOG", "MEX")
-        val origInBrazil = orig in brazilAirports
-        val destInBrazil = dest in brazilAirports
+        val origRegion = resolveWorldRegion(orig)
+        val destRegion = resolveWorldRegion(dest)
 
         val pair = setOf(orig, dest)
-        return when {
-            pair == setOf("IBZ", "BCN") || pair == setOf("IBZ", "PMI") || pair == setOf("IBZ", "VLC") -> 29.0
-            pair == setOf("IBZ", "MAD") || pair == setOf("LIS", "MAD") || pair == setOf("OPO", "MAD") -> 36.0
-            pair == setOf("LIS", "OPO") || pair == setOf("BCN", "MAD") -> 34.0
-            // Voo doméstico dentro do Brasil (ex: GRU -> FOR, GIG -> GRU)
-            origInBrazil && destInBrazil -> 64.0
-            // Voo intercontinental (ex: Europa <-> Brasil ou EUA/Dubai)
-            origInBrazil || destInBrazil || orig in longHaulIntl || dest in longHaulIntl -> 240.0
-            else -> 48.0
+        if (pair == setOf("IBZ", "BCN") || pair == setOf("IBZ", "PMI") || pair == setOf("IBZ", "VLC")) return 29.0
+        if (pair == setOf("IBZ", "MAD") || pair == setOf("LIS", "MAD") || pair == setOf("OPO", "MAD")) return 36.0
+        if (pair == setOf("LIS", "OPO") || pair == setOf("BCN", "MAD")) return 34.0
+
+        // Voo doméstico dentro do Brasil (ex: GRU -> FOR, GIG -> GRU)
+        if (origRegion == WorldRegion.SOUTH_AMERICA && destRegion == WorldRegion.SOUTH_AMERICA) {
+            return 64.0
+        }
+
+        // Rota Europa <-> América do Sul (ex: IBZ ➔ SAO, LIS ➔ GRU, MAD ➔ GIG)
+        if ((origRegion == WorldRegion.EUROPE && destRegion == WorldRegion.SOUTH_AMERICA) ||
+            (origRegion == WorldRegion.SOUTH_AMERICA && destRegion == WorldRegion.EUROPE)) {
+            return 320.0
+        }
+
+        // Rota Europa <-> América do Norte (ex: LIS ➔ JFK, MAD ➔ MIA)
+        if ((origRegion == WorldRegion.EUROPE && destRegion == WorldRegion.NORTH_AMERICA) ||
+            (origRegion == WorldRegion.NORTH_AMERICA && destRegion == WorldRegion.EUROPE)) {
+            return 280.0
+        }
+
+        // Outras rotas intercontinentais
+        if (origRegion != destRegion && origRegion != WorldRegion.UNKNOWN && destRegion != WorldRegion.UNKNOWN) {
+            return 290.0
+        }
+
+        return 48.0
+    }
+
+    /**
+     * Pares de aeroportos conhecidos que possuem operações aéreas comerciais regulares diretas (point-to-point).
+     * Rotas como Ibiza (IBZ) ➔ Porto (OPO) não possuem operações comerciais regulares diretas por companhias
+     * de rede como Air France ou TAP Portugal (que obrigatoriamente conectam através de CDG ou LIS).
+     */
+    private val KNOWN_DIRECT_ROUTE_PAIRS: Set<Set<String>> = setOf(
+        setOf("LIS", "OPO"), setOf("LIS", "FAO"), setOf("LIS", "FNC"), setOf("LIS", "PDL"),
+        setOf("LIS", "MAD"), setOf("LIS", "BCN"), setOf("LIS", "CDG"), setOf("LIS", "ORY"),
+        setOf("LIS", "LHR"), setOf("LIS", "LGW"), setOf("LIS", "FCO"), setOf("LIS", "MXP"),
+        setOf("LIS", "AMS"), setOf("LIS", "BRU"), setOf("LIS", "FRA"), setOf("LIS", "MUC"),
+        setOf("LIS", "BER"), setOf("LIS", "ZRH"), setOf("LIS", "GVA"), setOf("LIS", "VIE"),
+        setOf("LIS", "DUB"), setOf("LIS", "GRU"), setOf("LIS", "GIG"), setOf("LIS", "BSB"),
+        setOf("LIS", "CNF"), setOf("LIS", "SSA"), setOf("LIS", "REC"), setOf("LIS", "FOR"),
+        setOf("LIS", "JFK"), setOf("LIS", "MIA"), setOf("LIS", "BOS"), setOf("LIS", "DXB"),
+        setOf("OPO", "MAD"), setOf("OPO", "BCN"), setOf("OPO", "CDG"), setOf("OPO", "ORY"),
+        setOf("OPO", "LHR"), setOf("OPO", "LGW"), setOf("OPO", "AMS"), setOf("OPO", "BRU"),
+        setOf("OPO", "FRA"), setOf("OPO", "MUC"), setOf("OPO", "ZRH"), setOf("OPO", "GVA"),
+        setOf("OPO", "GRU"), setOf("OPO", "GIG"),
+        setOf("MAD", "BCN"), setOf("MAD", "IBZ"), setOf("MAD", "PMI"), setOf("MAD", "VLC"),
+        setOf("MAD", "AGP"), setOf("MAD", "SVQ"), setOf("MAD", "BIO"), setOf("MAD", "CDG"),
+        setOf("MAD", "ORY"), setOf("MAD", "LHR"), setOf("MAD", "FCO"), setOf("MAD", "MXP"),
+        setOf("MAD", "AMS"), setOf("MAD", "FRA"), setOf("MAD", "MUC"), setOf("MAD", "ZRH"),
+        setOf("MAD", "JFK"), setOf("MAD", "MIA"), setOf("MAD", "GRU"), setOf("MAD", "GIG"),
+        setOf("BCN", "IBZ"), setOf("BCN", "PMI"), setOf("BCN", "VLC"), setOf("BCN", "AGP"),
+        setOf("BCN", "SVQ"), setOf("BCN", "CDG"), setOf("BCN", "ORY"), setOf("BCN", "LHR"),
+        setOf("BCN", "LGW"), setOf("BCN", "FCO"), setOf("BCN", "MXP"), setOf("BCN", "AMS"),
+        setOf("BCN", "FRA"), setOf("BCN", "MUC"), setOf("BCN", "ZRH"),
+        setOf("IBZ", "PMI"), setOf("IBZ", "VLC"), setOf("IBZ", "AGP"),
+        setOf("CDG", "LHR"), setOf("CDG", "AMS"), setOf("CDG", "FCO"), setOf("CDG", "FRA"),
+        setOf("CDG", "MUC"), setOf("CDG", "JFK"), setOf("CDG", "GRU"),
+        setOf("LHR", "JFK"), setOf("LHR", "MIA"), setOf("LHR", "DXB"),
+        setOf("GRU", "GIG"), setOf("GRU", "BSB"), setOf("GRU", "CNF"), setOf("GRU", "SSA"),
+        setOf("GRU", "REC"), setOf("GRU", "FOR"), setOf("GRU", "CWB"), setOf("GRU", "POA")
+    )
+
+    fun hasDirectCommercialFlights(originIata: String, destinationIata: String): Boolean {
+        val orig = originIata.trim().uppercase()
+        val dest = destinationIata.trim().uppercase()
+        if (areAirportCodesEquivalent(orig, dest)) return false
+        if (isIntercontinentalRoute(orig, dest)) {
+            if (!canAirportHaveDirectLongHaul(orig) || !canAirportHaveDirectLongHaul(dest)) {
+                return false
+            }
+        }
+        // Verifica combinação direta ou via equivalência metropolitana (ex: LIS -> SAO mapeia para LIS -> GRU)
+        if (setOf(orig, dest) in KNOWN_DIRECT_ROUTE_PAIRS) return true
+        val origMetros = METRO_AIRPORT_MAPPING[orig] ?: setOf(orig)
+        val destMetros = METRO_AIRPORT_MAPPING[dest] ?: setOf(dest)
+        for (o in origMetros) {
+            for (d in destMetros) {
+                if (setOf(o, d) in KNOWN_DIRECT_ROUTE_PAIRS) return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Valida se uma determinada companhia aérea opera voos comerciais sem escalas (diretos)
+     * no par de aeroportos pesquisado. Companhias tradicionais de rede (ex: Air France, TAP,
+     * Iberia, KLM, Lufthansa) operam em modelo hub-and-spoke e NÃO possuem voos diretos
+     * entre aeroportos fora de suas bases (por exemplo: Air France e TAP NUNCA voam direto
+     * entre Ibiza IBZ e Porto OPO).
+     */
+    fun canAirlineOperateDirect(airlineIata: String, originIata: String, destinationIata: String): Boolean {
+        val orig = originIata.trim().uppercase()
+        val dest = destinationIata.trim().uppercase()
+        val carrier = airlineIata.trim().uppercase()
+
+        // 1. Bloqueia low-cost regional em rotas intercontinentais
+        if (isIntercontinentalRoute(orig, dest) && isLowCostRegionalAirline(carrier)) {
+            return false
+        }
+
+        // 2. Se a rota for intercontinental e a origem for outstation regional (ex: Ibiza IBZ)
+        if (isIntercontinentalRoute(orig, dest)) {
+            if (!canAirportHaveDirectLongHaul(orig) || !canAirportHaveDirectLongHaul(dest)) {
+                return false
+            }
+        }
+
+        if (!hasDirectCommercialFlights(orig, dest)) {
+            return false
+        }
+
+        return when (carrier) {
+            "AF" -> orig in setOf("CDG", "ORY", "PAR") || dest in setOf("CDG", "ORY", "PAR")
+            "TP" -> orig in setOf("LIS", "OPO") || dest in setOf("LIS", "OPO")
+            "IB", "I2" -> orig in setOf("MAD") || dest in setOf("MAD")
+            "UX" -> orig in setOf("MAD") || dest in setOf("MAD")
+            "KL" -> orig in setOf("AMS") || dest in setOf("AMS")
+            "LH" -> orig in setOf("FRA", "MUC") || dest in setOf("FRA", "MUC")
+            "BA" -> orig in setOf("LHR", "LGW", "LON") || dest in setOf("LHR", "LGW", "LON")
+            "LX" -> orig in setOf("ZRH", "GVA") || dest in setOf("ZRH", "GVA")
+            "G3", "AD", "LA" -> (orig in setOf("GRU", "GIG", "BSB", "CGH", "VCP", "SAO", "RIO") || dest in setOf("GRU", "GIG", "BSB", "CGH", "VCP", "SAO", "RIO"))
+            else -> !isLowCostRegionalAirline(carrier) || !isIntercontinentalRoute(orig, dest)
         }
     }
 

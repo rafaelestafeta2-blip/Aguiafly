@@ -286,4 +286,227 @@ class DuffelOfferProcessorTest {
         // Todas as 4 ofertas corrompidas/inconsistentes devem ser descartadas silenciosamente!
         assertTrue(results.isEmpty())
     }
+
+    @Test
+    fun `single segment on route without commercial direct flights (IBZ to OPO) is strictly reclassified as Com Escala`() {
+        // Simula oferta retornada pela Duffel para a rota Ibiza (IBZ) -> Porto (OPO)
+        // com apenas 1 segmento atribuído a Air France (AF) ou TAP (TP)
+        val rawJson = """
+            {
+              "data": {
+                "id": "orq_ibz_opo_test",
+                "offers": [
+                  {
+                    "id": "off_af_ibz_opo",
+                    "total_amount": "148.00",
+                    "total_currency": "EUR",
+                    "owner": { "name": "Air France", "iata_code": "AF" },
+                    "slices": [
+                      {
+                        "duration": "PT2H20M",
+                        "origin": { "iata_code": "IBZ", "name": "Ibiza", "city_name": "Ibiza" },
+                        "destination": { "iata_code": "OPO", "name": "Francisco Sá Carneiro", "city_name": "Porto" },
+                        "segments": [
+                          {
+                            "id": "seg_af_1",
+                            "departing_at": "2026-11-15T18:30:00Z",
+                            "arriving_at": "2026-11-15T20:50:00Z",
+                            "origin": { "iata_code": "IBZ", "name": "Ibiza", "city_name": "Ibiza" },
+                            "destination": { "iata_code": "OPO", "name": "Francisco Sá Carneiro", "city_name": "Porto" },
+                            "marketing_carrier": { "name": "Air France", "iata_code": "AF" },
+                            "marketing_carrier_flight_number": "359"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "off_tp_ibz_opo",
+                    "total_amount": "112.00",
+                    "total_currency": "EUR",
+                    "owner": { "name": "TAP Portugal", "iata_code": "TP" },
+                    "slices": [
+                      {
+                        "duration": "PT2H15M",
+                        "origin": { "iata_code": "IBZ", "name": "Ibiza", "city_name": "Ibiza" },
+                        "destination": { "iata_code": "OPO", "name": "Francisco Sá Carneiro", "city_name": "Porto" },
+                        "segments": [
+                          {
+                            "id": "seg_tp_1",
+                            "departing_at": "2026-11-15T16:55:00Z",
+                            "arriving_at": "2026-11-15T19:10:00Z",
+                            "origin": { "iata_code": "IBZ", "name": "Ibiza", "city_name": "Ibiza" },
+                            "destination": { "iata_code": "OPO", "name": "Francisco Sá Carneiro", "city_name": "Porto" },
+                            "marketing_carrier": { "name": "TAP Portugal", "iata_code": "TP" },
+                            "marketing_carrier_flight_number": "339"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val results = DuffelOfferProcessor.processRawDuffelJson(
+            rawJson = rawJson,
+            requestedOriginIata = "IBZ",
+            requestedDestinationIata = "OPO"
+        )
+
+        assertEquals(2, results.size)
+
+        val afOffer = results.first { it.offerId == "off_af_ibz_opo" }
+        assertFalse(afOffer.isDirectFlight)
+        assertFalse(afOffer.nonStop)
+        assertEquals("Com Escala", afOffer.flightTypeClassification)
+        assertEquals(1, afOffer.stopsCount)
+        assertTrue(afOffer.stopoverHubsSummary.contains("CDG") || afOffer.stopoverHubsSummary.contains("Paris"))
+        assertEquals(2, afOffer.segmentLegs.size)
+
+        val tpOffer = results.first { it.offerId == "off_tp_ibz_opo" }
+        assertFalse(tpOffer.isDirectFlight)
+        assertFalse(tpOffer.nonStop)
+        assertEquals("Com Escala", tpOffer.flightTypeClassification)
+        assertEquals(1, tpOffer.stopsCount)
+        assertTrue(tpOffer.stopoverHubsSummary.contains("LIS") || tpOffer.stopoverHubsSummary.contains("Lisboa"))
+        assertEquals(2, tpOffer.segmentLegs.size)
+    }
+
+    @Test
+    fun `single segment with mismatched origin or destination is discarded or reclassified`() {
+        val rawJson = """
+            {
+              "data": {
+                "id": "orq_mismatch_test",
+                "offers": [
+                  {
+                    "id": "off_mismatched_dest",
+                    "total_amount": "150.00",
+                    "total_currency": "EUR",
+                    "owner": { "name": "TAP Portugal", "iata_code": "TP" },
+                    "slices": [
+                      {
+                        "origin": { "iata_code": "IBZ", "name": "Ibiza" },
+                        "destination": { "iata_code": "MAD", "name": "Madrid" },
+                        "segments": [
+                          {
+                            "id": "seg_mismatch",
+                            "departing_at": "2026-11-15T10:00:00Z",
+                            "arriving_at": "2026-11-15T11:30:00Z",
+                            "origin": { "iata_code": "IBZ", "name": "Ibiza" },
+                            "destination": { "iata_code": "MAD", "name": "Madrid" }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        // O usuário pesquisou IBZ -> OPO, mas o segmento é IBZ -> MAD
+        val results = DuffelOfferProcessor.processRawDuffelJson(
+            rawJson = rawJson,
+            requestedOriginIata = "IBZ",
+            requestedDestinationIata = "OPO"
+        )
+
+        // Segmento divergente da busca final solicitada é descartado por conter dados truncados/incompatíveis
+        assertTrue(results.isEmpty())
+    }
+
+    @Test
+    fun `anti-SAO geographic error trapping blocks low-cost airlines and impossible short durations on intercontinental routes`() {
+        val rawJson = """
+            {
+              "data": {
+                "id": "orq_sao_test",
+                "offers": [
+                  {
+                    "id": "off_ryanair_absurd_sao",
+                    "total_amount": "45.00",
+                    "total_currency": "EUR",
+                    "owner": { "name": "Ryanair", "iata_code": "FR" },
+                    "slices": [
+                      {
+                        "origin": { "iata_code": "IBZ", "name": "Ibiza" },
+                        "destination": { "iata_code": "GRU", "name": "Guarulhos", "city_name": "São Paulo" },
+                        "segments": [
+                          {
+                            "id": "seg_fr_absurd",
+                            "departing_at": "2026-11-15T06:30:00Z",
+                            "arriving_at": "2026-11-15T08:10:00Z",
+                            "origin": { "iata_code": "IBZ", "name": "Ibiza" },
+                            "destination": { "iata_code": "GRU", "name": "Guarulhos" },
+                            "marketing_carrier": { "name": "Ryanair", "iata_code": "FR" }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "off_iberia_legit_sao",
+                    "total_amount": "480.00",
+                    "total_currency": "EUR",
+                    "owner": { "name": "Iberia", "iata_code": "IB" },
+                    "slices": [
+                      {
+                        "origin": { "iata_code": "IBZ", "name": "Ibiza" },
+                        "destination": { "iata_code": "GRU", "name": "Guarulhos", "city_name": "São Paulo" },
+                        "segments": [
+                          {
+                            "id": "seg_ib_feeder",
+                            "departing_at": "2026-11-15T10:00:00Z",
+                            "arriving_at": "2026-11-15T11:15:00Z",
+                            "origin": { "iata_code": "IBZ", "name": "Ibiza" },
+                            "destination": { "iata_code": "MAD", "name": "Barajas" },
+                            "marketing_carrier": { "name": "Iberia", "iata_code": "IB" }
+                          },
+                          {
+                            "id": "seg_ib_longhaul",
+                            "departing_at": "2026-11-15T13:00:00Z",
+                            "arriving_at": "2026-11-15T23:40:00Z",
+                            "origin": { "iata_code": "MAD", "name": "Barajas" },
+                            "destination": { "iata_code": "GRU", "name": "Guarulhos" },
+                            "marketing_carrier": { "name": "Iberia", "iata_code": "IB" }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        // O usuário pesquisou IBZ para SAO (área metropolitana de São Paulo)
+        val results = DuffelOfferProcessor.processRawDuffelJson(
+            rawJson = rawJson,
+            requestedOriginIata = "IBZ",
+            requestedDestinationIata = "SAO"
+        )
+
+        // A oferta absurda da Ryanair (1h40 e 45€ em rota transatlântica) DEVE ser sumariamente descartada!
+        assertEquals(1, results.size)
+        val legit = results.first()
+        assertEquals("off_iberia_legit_sao", legit.offerId)
+        assertEquals("IB", legit.airlineIata)
+        assertFalse(legit.isDirectFlight)
+        assertEquals("Com Escala", legit.flightTypeClassification)
+        assertEquals(1, legit.stopsCount)
+        assertTrue(legit.durationMinutes >= 570) // Pelo menos 9h30m
+    }
+
+    @Test
+    fun `metro equivalence recognizes SAO to GRU, RIO to GIG and PAR to CDG`() {
+        assertTrue(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("SAO", "GRU"))
+        assertTrue(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("GRU", "SAO"))
+        assertTrue(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("SAO", "CGH"))
+        assertTrue(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("RIO", "GIG"))
+        assertTrue(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("PAR", "CDG"))
+        assertFalse(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("SAO", "LIS"))
+    }
 }

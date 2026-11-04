@@ -152,24 +152,46 @@ data class EnrichedFlightOffer(
     val effectiveStopsCount: Int
         get() = when {
             segmentLegs.size > 1 -> maxOf(stopsCount, segmentLegs.size - 1)
-            else -> stopsCount.coerceAtLeast(0)
+            !isDirectFlight -> maxOf(stopsCount, 1)
+            else -> 0
         }
 
     /**
      * Filtro Estrito de Voos Diretos (`non_stop`):
-     * Uma rota SÓ pode ser classificada e exibida como 'Direta' se `slice.segments.length === 1`
-     * E a origem do segmento for o aeroporto de partida pesquisado (`origin.iata_code`)
-     * E o destino for o aeroporto final (`destination.iata_code`).
-     * Se houver mais de 1 segmento, é forçada como 'Com Escala'.
+     * Uma rota SÓ pode ser classificada e exibida como 'Direta' / 'Directo' se:
+     * 1. `slice.segments` tem exatamente tamanho 1 (`length === 1`).
+     * 2. O aeroporto de partida desse segmento (`origin.iata_code`) é EXATAMENTE a origem pesquisada
+     *    E o aeroporto de chegada (`destination.iata_code`) é EXATAMENTE o destino final pesquisado.
+     * 3. A rota e a companhia aérea possuem operação direta comercial real autorizada.
+     * Caso contrário, a oferta é estritamente reclassificada como 'Com Escala'.
      */
     val isDirectFlight: Boolean
         get() = if (segmentLegs.isNotEmpty()) {
+            val first = segmentLegs.first()
+            val origMatch = first.originIata.equals(originIata, ignoreCase = true) ||
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent(first.originIata, originIata)
+            val destMatch = first.destinationIata.equals(destinationIata, ignoreCase = true) ||
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent(first.destinationIata, destinationIata)
+            val isIntercontinental = com.example.domain.concierge.AirportAndLoyaltyCatalog.isIntercontinentalRoute(originIata, destinationIata)
+            val canAirportDirect = com.example.domain.concierge.AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(originIata) &&
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(destinationIata)
+
             segmentLegs.size == 1 &&
                 stopsCount == 0 &&
-                segmentLegs.first().originIata.equals(originIata, ignoreCase = true) &&
-                segmentLegs.first().destinationIata.equals(destinationIata, ignoreCase = true)
+                origMatch &&
+                destMatch &&
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.hasDirectCommercialFlights(originIata, destinationIata) &&
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.canAirlineOperateDirect(airlineIata, originIata, destinationIata) &&
+                (!isIntercontinental || canAirportDirect)
         } else {
-            stopsCount == 0
+            val isIntercontinental = com.example.domain.concierge.AirportAndLoyaltyCatalog.isIntercontinentalRoute(originIata, destinationIata)
+            val canAirportDirect = com.example.domain.concierge.AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(originIata) &&
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.canAirportHaveDirectLongHaul(destinationIata)
+
+            stopsCount == 0 &&
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.hasDirectCommercialFlights(originIata, destinationIata) &&
+                com.example.domain.concierge.AirportAndLoyaltyCatalog.canAirlineOperateDirect(airlineIata, originIata, destinationIata) &&
+                (!isIntercontinental || canAirportDirect)
         }
 
     val nonStop: Boolean
@@ -180,7 +202,7 @@ data class EnrichedFlightOffer(
 
     val stopsBadgeLabel: String
         get() = when {
-            isDirectFlight -> "Direto"
+            isDirectFlight -> "Directo"
             effectiveStopsCount == 1 -> if (stopoverHubsSummary.isNotBlank()) "1 Escala ($stopoverHubsSummary)" else "1 Escala"
             else -> if (stopoverHubsSummary.isNotBlank()) "$effectiveStopsCount Escalas ($stopoverHubsSummary)" else "$effectiveStopsCount Escalas"
         }
