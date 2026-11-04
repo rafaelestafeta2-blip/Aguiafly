@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -287,7 +288,7 @@ fun SearchAndResultsScreen(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Column {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             text = "Busca Global de Voos",
                             style = MaterialTheme.typography.titleLarge,
@@ -298,6 +299,36 @@ fun SearchAndResultsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isDuffelLive) androidx.compose.ui.graphics.Color(0xFF10B981).copy(alpha = 0.12f)
+                                    else androidx.compose.ui.graphics.Color(0xFFF59E0B).copy(alpha = 0.12f)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("duffel_connection_status_badge")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(
+                                        if (isDuffelLive) androidx.compose.ui.graphics.Color(0xFF10B981)
+                                        else androidx.compose.ui.graphics.Color(0xFFF59E0B)
+                                    )
+                            )
+                            Text(
+                                text = if (isDuffelLive) "🟢 API Duffel NDC Conectada (Voos Ao Vivo)"
+                                       else "🟡 Modo Catálogo Demonstrativo • Adicione DUFFEL_API_TOKEN no Secrets",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isDuffelLive) androidx.compose.ui.graphics.Color(0xFF047857)
+                                        else androidx.compose.ui.graphics.Color(0xFFB45309)
+                            )
+                        }
                     }
 
                     TripAndPassengerSelectorBar(
