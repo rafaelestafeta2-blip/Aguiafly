@@ -50,11 +50,13 @@ fun InteractiveSeatMapGrid(
     seats: List<SeatOption>,
     selectedSeat: String,
     onSelectSeat: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isLoading: Boolean = false
 ) {
-    val rows = seats.groupBy { it.row }
+    val rows = seats.groupBy { it.row }.toSortedMap()
     val cyan = MaterialTheme.colorScheme.primary
     val amber = MaterialTheme.colorScheme.secondary
+    val occupiedRed = Color(0xFFEF4444)
     val isAutoFree = selectedSeat.isBlank() ||
         selectedSeat.equals(AUTO_FREE_SEAT, ignoreCase = true) ||
         selectedSeat.startsWith("AUTO", ignoreCase = true)
@@ -73,11 +75,32 @@ fun InteractiveSeatMapGrid(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "Escolha de Assento (Opcional)",
-            style = MaterialTheme.typography.titleMedium,
-            color = cyan
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Mapa de Assentos (Narrow-Body 6 Colunas)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = cyan
+                )
+                Text(
+                    text = "Layout Europeu: A - B - C  |  Corredor  |  D - E - F",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (isLoading) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = cyan
+                )
+            }
+        }
 
         // Opção Padrão: Assento Automático / Gratuito (€0.00)
         Surface(
@@ -136,132 +159,285 @@ fun InteractiveSeatMapGrid(
         // Status do assento atual
         Text(
             text = when {
-                isAutoFree -> "Padrão ativo: Assento Automático Gratuito (€0.00). Ou toque abaixo para marcar um assento específico:"
-                isSelectedWindow -> "Assento pago selecionado: $selectedSeat • JANELA (Vista Panorâmica)"
-                else -> "Assento pago selecionado: $selectedSeat • CORREDOR (Acesso Rápido)"
+                isAutoFree -> "Padrão ativo: Assento Automático Gratuito (€0.00). Ou selecione um lugar específico abaixo:"
+                isSelectedWindow -> "Assento selecionado: $selectedSeat • JANELA (Vista Panorâmica)"
+                else -> "Assento selecionado: $selectedSeat • CORREDOR / MEIO"
             },
             style = MaterialTheme.typography.bodySmall,
             color = if (isAutoFree) MaterialTheme.colorScheme.onSurfaceVariant else cyan,
             fontWeight = FontWeight.SemiBold
         )
 
-        // Guia Superior de Posição: JANELA ESQUERDA | CORREDOR | JANELA DIREITA
+        // LEGENDA VISUAL OBRIGATÓRIA DOS 3 ESTADOS
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF10B981))
+                    )
+                    Text(
+                        text = "Livre",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(cyan)
+                    )
+                    Text(
+                        text = "Selecionado",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = cyan,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(occupiedRed)
+                    )
+                    Text(
+                        text = "Ocupado (Bloqueado)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = occupiedRed
+                    )
+                }
+            }
+        }
+
+        // Guia Superior de Colunas: A - B - C | CORREDOR | D - E - F
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "🪟 JANELA ESQ",
-                style = MaterialTheme.typography.labelLarge,
-                color = cyan
-            )
-            Text(
-                text = "🚶 CORREDOR",
-                style = MaterialTheme.typography.labelLarge,
-                color = amber
-            )
-            Text(
-                text = "🪟 JANELA DIR",
-                style = MaterialTheme.typography.labelLarge,
-                color = cyan
-            )
+            // Lado Esquerdo: A (Janela), B (Meio), C (Corredor)
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Text(text = "A (JAN)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = cyan)
+                Text(text = "B (MEI)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text = "C (COR)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = amber)
+            }
+
+            // Corredor Central
+            Box(
+                modifier = Modifier.width(36.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "🚶",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+
+            // Lado Direito: D (Corredor), E (Meio), F (Janela)
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Text(text = "D (COR)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = amber)
+                Text(text = "E (MEI)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text = "F (JAN)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = cyan)
+            }
         }
 
+        // Renderização Linha por Linha da Matriz (6 Colunas A - B - C | D - E - F)
         rows.forEach { (rowNumber, rowSeats) ->
+            // Separa os assentos da fileira entre Lado Esquerdo (A, B, C) e Lado Direito (D, E, F)
+            val leftSeats = rowSeats.filter { it.column in listOf("A", "B", "C") }
+                .sortedBy { it.column }
+            val rightSeats = rowSeats.filter { it.column in listOf("D", "E", "F", "G", "K") }
+                .sortedBy { it.column }
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Indicador de fuselagem/janela esquerda
                 Box(
                     modifier = Modifier
-                        .width(6.dp)
-                        .height(26.dp)
+                        .width(4.dp)
+                        .height(32.dp)
                         .clip(CircleShape)
-                        .background(cyan.copy(alpha = 0.8f))
+                        .background(cyan.copy(alpha = 0.5f))
                 )
 
-                Text(
-                    text = rowNumber.toString().padStart(2, '0'),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(24.dp)
-                )
+                Spacer(modifier = Modifier.width(4.dp))
 
-                rowSeats.forEachIndexed { index, seat ->
-                    val isSelected = !isAutoFree && seat.designator == selectedSeat
-                    val bgColor = when {
-                        isSelected -> cyan
-                        !seat.isAvailable -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                    val txtColor = when {
-                        isSelected -> MaterialTheme.colorScheme.onPrimary
-                        !seat.isAvailable -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(bgColor)
-                            .border(
-                                width = 1.dp,
-                                color = when {
-                                    isSelected -> Color.White
-                                    seat.isWindow -> cyan.copy(alpha = 0.55f)
-                                    else -> amber.copy(alpha = 0.35f)
-                                },
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .clickable(enabled = seat.isAvailable) {
-                                onSelectSeat(seat.designator)
-                            }
-                            .testTag("seat_button_${seat.designator}"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = seat.designator,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = txtColor,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = if (seat.isWindow) "JAN" else "COR",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isSelected) txtColor else if (seat.isWindow) cyan else amber
-                            )
-                        }
-                    }
-
-                    if (index == (rowSeats.size / 2) - 1) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = amber.copy(alpha = 0.14f)
-                        ) {
-                            Text(
-                                text = "🚶",
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                            )
-                        }
+                // Banco Esquerdo (Colunas A, B, C) com distribuição proporcional weight(1f)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    leftSeats.forEach { seat ->
+                        SeatItemCell(
+                            seat = seat,
+                            isSelected = !isAutoFree && seat.designator == selectedSeat,
+                            onSelectSeat = onSelectSeat,
+                            cyanColor = cyan,
+                            amberColor = amber,
+                            occupiedRedColor = occupiedRed,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
 
+                // Corredor Central (Número da Fileira + Ícone)
+                Column(
+                    modifier = Modifier.width(36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = rowNumber.toString().padStart(2, '0'),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Banco Direito (Colunas D, E, F) com distribuição proporcional weight(1f)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    rightSeats.forEach { seat ->
+                        SeatItemCell(
+                            seat = seat,
+                            isSelected = !isAutoFree && seat.designator == selectedSeat,
+                            onSelectSeat = onSelectSeat,
+                            cyanColor = cyan,
+                            amberColor = amber,
+                            occupiedRedColor = occupiedRed,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                // Indicador de fuselagem/janela direita
                 Box(
                     modifier = Modifier
-                        .width(6.dp)
-                        .height(26.dp)
+                        .width(4.dp)
+                        .height(32.dp)
                         .clip(CircleShape)
-                        .background(cyan.copy(alpha = 0.8f))
+                        .background(cyan.copy(alpha = 0.5f))
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SeatItemCell(
+    seat: SeatOption,
+    isSelected: Boolean,
+    onSelectSeat: (String) -> Unit,
+    cyanColor: Color,
+    amberColor: Color,
+    occupiedRedColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val isAvailable = seat.isAvailable
+    val bgColor = when {
+        isSelected -> cyanColor
+        !isAvailable -> Color(0xFF1E293B).copy(alpha = 0.65f)
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val borderColor = when {
+        isSelected -> Color.White
+        !isAvailable -> occupiedRedColor.copy(alpha = 0.55f)
+        seat.isWindow -> cyanColor.copy(alpha = 0.55f)
+        else -> amberColor.copy(alpha = 0.4f)
+    }
+    val txtColor = when {
+        isSelected -> Color.White
+        !isAvailable -> occupiedRedColor
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+
+    Box(
+        modifier = modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor)
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable(enabled = isAvailable) {
+                onSelectSeat(seat.designator)
+            }
+            .testTag("seat_button_${seat.designator}"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = seat.designator,
+                style = MaterialTheme.typography.labelSmall,
+                color = txtColor,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = when {
+                    isSelected -> "✓ SEL"
+                    !isAvailable -> "✕ OCP"
+                    seat.isWindow -> "JAN"
+                    seat.column in listOf("C", "D") -> "COR"
+                    else -> "MEI"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = when {
+                    isSelected -> Color.White
+                    !isAvailable -> occupiedRedColor
+                    seat.isWindow -> cyanColor
+                    seat.column in listOf("C", "D") -> amberColor
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                fontWeight = if (isSelected || !isAvailable) FontWeight.Bold else FontWeight.Normal
+            )
         }
     }
 }

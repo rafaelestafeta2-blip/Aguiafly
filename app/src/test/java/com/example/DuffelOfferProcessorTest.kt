@@ -509,4 +509,45 @@ class DuffelOfferProcessorTest {
         assertTrue(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("PAR", "CDG"))
         assertFalse(com.example.domain.concierge.AirportAndLoyaltyCatalog.areAirportCodesEquivalent("SAO", "LIS"))
     }
+
+    @Test
+    fun `narrow-body aircraft layout generates exactly 6 columns A-B-C and D-E-F with correct aisle and window positions`() {
+        val spec = com.example.domain.aircraft.AircraftSpecsCatalog.resolveSpec("32Q", "Airbus A321neo") // Airbus A321neo Narrow-Body
+        val seats = com.example.domain.aircraft.AircraftSpecsCatalog.generateSeatMapForSpec(spec, "economy")
+
+        // Agrupa por fileira
+        val rows = seats.groupBy { it.row }
+        assertTrue(rows.isNotEmpty())
+
+        rows.forEach { (rowNum, rowSeats) ->
+            // Cada fileira do corredor único europeu DEVE conter exatamente 6 colunas (A, B, C, D, E, F)
+            assertEquals(6, rowSeats.size)
+            val cols = rowSeats.map { it.column }
+            assertEquals(listOf("A", "B", "C", "D", "E", "F"), cols)
+
+            // Colunas A e F devem ser Janela
+            val seatA = rowSeats.first { it.column == "A" }
+            val seatF = rowSeats.first { it.column == "F" }
+            assertTrue(seatA.isWindow)
+            assertTrue(seatF.isWindow)
+
+            // Colunas C e D devem ser Corredor (não Janela)
+            val seatC = rowSeats.first { it.column == "C" }
+            val seatD = rowSeats.first { it.column == "D" }
+            assertFalse(seatC.isWindow)
+            assertFalse(seatD.isWindow)
+        }
+    }
+
+    @Test
+    fun `seat concurrency exception encapsulates seat designator and clear friendly rollback message`() {
+        val ex = com.example.data.repository.SeatNotAvailableException(
+            seatDesignator = "12A",
+            message = "O assento 12A não está mais disponível na companhia aérea (seat_not_available). A pré-autorização foi cancelada sem cobrança."
+        )
+        assertEquals("12A", ex.seatDesignator)
+        assertTrue(ex.message!!.contains("12A"))
+        assertTrue(ex.message!!.contains("cancelada sem cobrança"))
+    }
 }
+

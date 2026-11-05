@@ -51,5 +51,7 @@ data class SeatOption(
     val isBusinessSuite: Boolean,
     val isWindow: Boolean,
     val isAvailable: Boolean,
-    val extraLegroom: Boolean
+    val extraLegroom: Boolean,
+    val priceEur: Double = 0.0,
+    val serviceId: String? = null
 )

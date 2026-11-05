@@ -53,13 +53,19 @@ fun AircraftDetailScreen(
     selectedSeat: String,
     onSelectSeat: (String) -> Unit,
     onProceedToCheckout: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    seatMap: List<com.example.data.model.SeatOption> = emptyList(),
+    isLoadingSeatMap: Boolean = false
 ) {
     BackHandler { onBack() }
 
     val spec = offer.aircraftSpec
-    val seatMap = remember(spec, offer.cabinClass) {
-        AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass)
+    val effectiveSeatMap = if (seatMap.isNotEmpty()) {
+        seatMap
+    } else {
+        remember(spec, offer.cabinClass) {
+            AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass)
+        }
     }
 
     LazyColumn(
@@ -187,9 +193,10 @@ fun AircraftDetailScreen(
 
         item {
             InteractiveSeatMapGrid(
-                seats = seatMap,
+                seats = effectiveSeatMap,
                 selectedSeat = selectedSeat,
-                onSelectSeat = onSelectSeat
+                onSelectSeat = onSelectSeat,
+                isLoading = isLoadingSeatMap
             )
         }
 

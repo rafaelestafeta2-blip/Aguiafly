@@ -45,6 +45,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 
+/**
+ * Exceção de Concorrência: disparada quando o assento selecionado pelo utilizador
+ * foi ocupado simultaneamente por outro passageiro no momento da criação do pedido na Duffel.
+ */
+class SeatNotAvailableException(
+    val seatDesignator: String,
+    message: String = "O assento $seatDesignator não está mais disponível na companhia aérea (seat_not_available). A pré-autorização foi cancelada sem cobrança."
+) : IllegalStateException(message)
+
 class FlightRepository {
 
     private val duffelApi = NetworkClient.duffelApi
@@ -71,6 +80,79 @@ class FlightRepository {
 
     fun isDuffelConfigured(): Boolean {
         return getActiveDuffelToken().isNotBlank()
+    }
+
+    /**
+     * Sincronização em Tempo Real do Mapa de Assentos com a API Duffel (GET /air/seat_maps?offer_id=...)
+     * 1. Consulta o endpoint ao vivo da Duffel para a oferta selecionada.
+     * 2. Mapeia com precisão o estado visual de cada assento:
+     *    - Livre / Disponível (available_services presente): Clicável
+     *    - Ocupado / Indisponível (available_services vazio/ausente): Bloqueado / Não clicável
+     * 3. Se a oferta for de contingência ou a chamada falhar, gera a matriz 6 colunas (A-B-C | D-E-F)
+     *    com bloqueios realistas.
+     */
+    suspend fun fetchSeatMap(offer: EnrichedFlightOffer): List<com.example.data.model.SeatOption> {
+        val spec = offer.aircraftSpec
+        val fallbackSeats = AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass)
+
+        if (!isDuffelConfigured() || !offer.isLiveDuffelOffer || !offer.offerId.startsWith("off_") ||
+            offer.offerId.startsWith("off_deal_") || offer.offerId.startsWith("off_duffel_ndc_")
+        ) {
+            return fallbackSeats
+        }
+
+        return try {
+            val response = duffelApi.getSeatMaps(
+                bearerToken = "Bearer ${getActiveDuffelToken()}",
+                offerId = offer.offerId
+            )
+            val seatMapData = response.data.firstOrNull() ?: return fallbackSeats
+            val cabin = seatMapData.cabins.firstOrNull {
+                it.cabinClass.equals(offer.cabinClass, ignoreCase = true)
+            } ?: seatMapData.cabins.firstOrNull() ?: return fallbackSeats
+
+            val mappedSeats = mutableListOf<com.example.data.model.SeatOption>()
+            cabin.rows.forEach { rowDto ->
+                rowDto.sections.forEach { sectionDto ->
+                    sectionDto.elements.forEach { el ->
+                        if (el.type == "seat" && !el.designator.isNullOrBlank()) {
+                            val designator = el.designator.trim().uppercase()
+                            val rowNum = designator.filter { it.isDigit() }.toIntOrNull() ?: 10
+                            val col = designator.filter { it.isLetter() }.uppercase()
+                            val service = el.availableServices?.firstOrNull()
+                            val isAvailable = service != null
+                            val priceEur = service?.totalAmount?.toDoubleOrNull() ?: 14.0
+
+                            mappedSeats.add(
+                                com.example.data.model.SeatOption(
+                                    designator = designator,
+                                    row = rowNum,
+                                    column = col,
+                                    isBusinessSuite = cabin.cabinClass.equals("business", ignoreCase = true) ||
+                                        cabin.cabinClass.equals("first", ignoreCase = true),
+                                    isWindow = AircraftSpecsCatalog.isWindowSeat(designator),
+                                    isAvailable = isAvailable,
+                                    extraLegroom = rowNum == 1 || rowNum == 10,
+                                    priceEur = priceEur,
+                                    serviceId = service?.id
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (mappedSeats.isNotEmpty()) {
+                mappedSeats
+            } else {
+                fallbackSeats
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("FlightRepository", "Erro ao buscar seat_maps ao vivo na Duffel API (${offer.offerId}): ${e.message}")
+            fallbackSeats
+        }
     }
 
     /**
@@ -1097,8 +1179,14 @@ class FlightRepository {
                     )
                 }
 
-                // 3.3 Cria o pedido na Duffel (POST /air/orders).
+                // 3.3 Cria o pedido na Duffel (POST /air/orders) incluindo serviços de assento se selecionado.
                 // SE FALHAR -> Cancela imediatamente a autorização na Stripe (paymentIntents.cancel)!
+                val orderServices = if (ancillaries.isPaidSeatSelected && !ancillaries.selectedSeatServiceId.isNullOrBlank()) {
+                    listOf(com.example.data.model.DuffelOrderServicePayload(id = ancillaries.selectedSeatServiceId, quantity = 1))
+                } else {
+                    null
+                }
+
                 val orderResp = try {
                     duffelApi.createInstantOrder(
                         bearerToken = "Bearer ${getActiveDuffelToken()}",
@@ -1124,7 +1212,8 @@ class FlightRepository {
                                         phoneNumber = sanitizedPhoneE164,
                                         identityDocuments = identityDocsPayload
                                     )
-                                )
+                                ),
+                                services = orderServices
                             )
                         )
                     )
@@ -1140,6 +1229,28 @@ class FlightRepository {
                         )
                     }
                     com.example.domain.security.TransactionIdempotencyGuard.releaseOnFailure(idempotencyKey)
+
+                    val errString = duffelErr.message.orEmpty().lowercase()
+                    val errBody = runCatching {
+                        (duffelErr as? retrofit2.HttpException)?.response()?.errorBody()?.string()?.lowercase().orEmpty()
+                    }.getOrDefault("")
+
+                    val isSeatConflict = errString.contains("seat_not_available") ||
+                        errString.contains("service_not_available") ||
+                        errString.contains("seat_already_taken") ||
+                        errBody.contains("seat_not_available") ||
+                        errBody.contains("service_not_available") ||
+                        errBody.contains("seat_already_taken")
+
+                    if (isSeatConflict && ancillaries.isPaidSeatSelected) {
+                        return Result.failure(
+                            SeatNotAvailableException(
+                                seatDesignator = ancillaries.seatDesignator,
+                                message = "O assento ${ancillaries.seatDesignator} não está mais disponível na companhia aérea (seat_not_available). A pré-autorização no seu cartão foi cancelada sem custos. Por favor, escolha outro lugar no mapa de assentos."
+                            )
+                        )
+                    }
+
                     return Result.failure(
                         IllegalStateException(
                             "Emissão recusada pela companhia aérea (${duffelErr.localizedMessage}). A pré-autorização no seu cartão foi cancelada imediatamente sem cobrança."

@@ -279,6 +279,9 @@ fun AetherAuthenticatedShell(
     val ticketEsimSelections by bookingViewModel.ticketEsimSelections.collectAsStateWithLifecycle()
     val ticketLoungeSelections by bookingViewModel.ticketLoungeSelections.collectAsStateWithLifecycle()
     val ticketExperienceSelections by bookingViewModel.ticketExperienceSelections.collectAsStateWithLifecycle()
+    val liveSeatMap by bookingViewModel.seatMap.collectAsStateWithLifecycle()
+    val isLoadingSeatMap by bookingViewModel.isLoadingSeatMap.collectAsStateWithLifecycle()
+    val seatConflictError by bookingViewModel.seatConflictError.collectAsStateWithLifecycle()
 
     val unifiedPackages by packagesViewModel.unifiedPackages.collectAsStateWithLifecycle()
     val adminCmsPackages by packagesViewModel.adminCmsPackages.collectAsStateWithLifecycle()
@@ -585,7 +588,9 @@ fun AetherAuthenticatedShell(
                             selectedSeat = ancillaries.seatDesignator,
                             onSelectSeat = bookingViewModel::updateSeat,
                             onProceedToCheckout = { currentScreen = MainDestination.CHECKOUT },
-                            onBack = { currentScreen = MainDestination.SEARCH }
+                            onBack = { currentScreen = MainDestination.SEARCH },
+                            seatMap = liveSeatMap,
+                            isLoadingSeatMap = isLoadingSeatMap
                         )
                     } else {
                         currentScreen = MainDestination.SEARCH
@@ -630,7 +635,10 @@ fun AetherAuthenticatedShell(
                                     }
                                 )
                             },
-                            onBack = { currentScreen = MainDestination.SEARCH }
+                            onBack = { currentScreen = MainDestination.SEARCH },
+                            seatConflictError = seatConflictError,
+                            onDismissSeatConflict = bookingViewModel::clearSeatConflictError,
+                            onResolveSeatConflict = { currentScreen = MainDestination.AIRCRAFT_DETAIL }
                         )
                     } else {
                         currentScreen = MainDestination.SEARCH

@@ -141,6 +141,34 @@ class FlightBookingViewModel(
     private val _confirmedCancellations = MutableStateFlow<Map<String, OrderCancellationConfirmation>>(emptyMap())
     val confirmedCancellations: StateFlow<Map<String, OrderCancellationConfirmation>> = _confirmedCancellations.asStateFlow()
 
+    private val _seatMap = MutableStateFlow<List<com.example.data.model.SeatOption>>(emptyList())
+    val seatMap: StateFlow<List<com.example.data.model.SeatOption>> = _seatMap.asStateFlow()
+
+    private val _isLoadingSeatMap = MutableStateFlow(false)
+    val isLoadingSeatMap: StateFlow<Boolean> = _isLoadingSeatMap.asStateFlow()
+
+    private val _seatConflictError = MutableStateFlow<String?>(null)
+    val seatConflictError: StateFlow<String?> = _seatConflictError.asStateFlow()
+
+    fun clearSeatConflictError() {
+        _seatConflictError.value = null
+    }
+
+    fun loadSeatMapForOffer(offer: EnrichedFlightOffer) {
+        viewModelScope.launch {
+            _isLoadingSeatMap.value = true
+            try {
+                val liveSeats = flightRepository.fetchSeatMap(offer)
+                _seatMap.value = liveSeats
+            } catch (e: Exception) {
+                Log.w("FlightBookingVM", "Erro ao carregar seat map", e)
+                _seatMap.value = com.example.domain.aircraft.AircraftSpecsCatalog.generateSeatMapForSpec(offer.aircraftSpec, offer.cabinClass)
+            } finally {
+                _isLoadingSeatMap.value = false
+            }
+        }
+    }
+
     val isDuffelLive: Boolean = flightRepository.isDuffelConfigured()
     val isStripeLive: Boolean = flightRepository.isStripeConfigured()
 
@@ -537,6 +565,7 @@ class FlightBookingViewModel(
             _selectedAncillaries.value
         )
         _selectedOffer.value = offer.copy(pricing = updatedPricing)
+        loadSeatMapForOffer(offer)
         viewModelScope.launch {
             _aircraftPhotos.value = flightRepository.fetchAircraftPhotos(
                 icaoCode = offer.aircraftSpec.icaoCode,
@@ -614,7 +643,11 @@ class FlightBookingViewModel(
     }
 
     fun updateSeat(seatDesignator: String) {
-        _selectedAncillaries.value = _selectedAncillaries.value.copy(seatDesignator = seatDesignator)
+        val foundServiceId = _seatMap.value.firstOrNull { it.designator.equals(seatDesignator, ignoreCase = true) }?.serviceId
+        _selectedAncillaries.value = _selectedAncillaries.value.copy(
+            seatDesignator = seatDesignator,
+            selectedSeatServiceId = foundServiceId
+        )
     }
 
     fun clearAllAncillaries() {
@@ -784,6 +817,14 @@ class FlightBookingViewModel(
                     _statusBanner.value = "E-Ticket ${finalTicket.bookingReference} • $checkInMsg"
                     onOrderIssued(finalTicket)
                 }.onFailure { err ->
+                    if (err is com.example.data.repository.SeatNotAvailableException) {
+                        _seatConflictError.value = err.message
+                        _selectedAncillaries.value = _selectedAncillaries.value.copy(
+                            seatDesignator = com.example.data.model.AUTO_FREE_SEAT,
+                            selectedSeatServiceId = null
+                        )
+                        loadSeatMapForOffer(offer)
+                    }
                     _statusBanner.value = "Atenção: ${err.localizedMessage}"
                 }
             } finally {

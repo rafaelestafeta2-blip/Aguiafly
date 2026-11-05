@@ -7,6 +7,7 @@ import com.example.data.model.DuffelOrderCancellationResponseWrapper
 import com.example.data.model.DuffelOrderCreateEnvelope
 import com.example.data.model.DuffelOrderResponseWrapper
 import com.example.data.model.DuffelPlacesResponseWrapper
+import com.example.data.model.DuffelSeatMapsResponseWrapper
 import com.example.data.model.DuffelSingleOfferResponseWrapper
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -87,5 +88,19 @@ interface DuffelApiService {
         @Header("Authorization") bearerToken: String,
         @Query("query") query: String
     ): DuffelPlacesResponseWrapper
+
+    /**
+     * Sincronização em Tempo Real com a API da Duffel (GET /air/seat_maps?offer_id=...)
+     * Retorna os assentos da aeronave com status de ocupação e serviços disponíveis.
+     */
+    @Headers(
+        "Duffel-Version: v2",
+        "Accept: application/json"
+    )
+    @GET("air/seat_maps")
+    suspend fun getSeatMaps(
+        @Header("Authorization") bearerToken: String,
+        @Query("offer_id") offerId: String
+    ): DuffelSeatMapsResponseWrapper
 }
 

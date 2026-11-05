@@ -38,6 +38,7 @@ data class MarkupConfig(
  */
 data class SelectedAncillaries(
     val seatDesignator: String = AUTO_FREE_SEAT,
+    val selectedSeatServiceId: String? = null,
     val includeExtraBaggage23Kg: Boolean = false,
     val includePriorityLounge: Boolean = false,
     val selectedEsimPackage: AiraloEsimPackage? = null,

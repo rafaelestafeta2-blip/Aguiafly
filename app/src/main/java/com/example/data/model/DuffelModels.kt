@@ -132,7 +132,8 @@ data class DuffelOrderCreatePayload(
     @Json(name = "type") val type: String = "instant",
     @Json(name = "selected_offers") val selectedOffers: List<String>,
     @Json(name = "payments") val payments: List<DuffelPaymentPayload>,
-    @Json(name = "passengers") val passengers: List<DuffelOrderPassengerPayload>
+    @Json(name = "passengers") val passengers: List<DuffelOrderPassengerPayload>,
+    @Json(name = "services") val services: List<DuffelOrderServicePayload>? = null
 )
 
 data class DuffelPaymentPayload(
@@ -178,6 +179,11 @@ data class DuffelOrderData(
     @Json(name = "documents") val documents: List<DuffelOrderDocument>? = emptyList()
 )
 
+data class DuffelOrderServicePayload(
+    @Json(name = "id") val id: String,
+    @Json(name = "quantity") val quantity: Int = 1
+)
+
 /**
  * Payload para POST /air/order_cancellations (Duffel API v2)
  */
@@ -202,4 +208,48 @@ data class DuffelOrderCancellationData(
     @Json(name = "expires_at") val expiresAt: String? = null,
     @Json(name = "confirmed_at") val confirmedAt: String? = null
 )
+
+/**
+ * DTOs para o endpoint GET /air/seat_maps?offer_id=:offerId (Duffel API v2)
+ */
+data class DuffelSeatMapsResponseWrapper(
+    @Json(name = "data") val data: List<DuffelSeatMapData> = emptyList()
+)
+
+data class DuffelSeatMapData(
+    @Json(name = "id") val id: String = "",
+    @Json(name = "slice_id") val sliceId: String? = null,
+    @Json(name = "segment_id") val segmentId: String? = null,
+    @Json(name = "cabins") val cabins: List<DuffelSeatMapCabin> = emptyList()
+)
+
+data class DuffelSeatMapCabin(
+    @Json(name = "cabin_class") val cabinClass: String? = null,
+    @Json(name = "aisles") val aisles: Int = 1,
+    @Json(name = "rows") val rows: List<DuffelSeatMapRow> = emptyList()
+)
+
+data class DuffelSeatMapRow(
+    @Json(name = "sections") val sections: List<DuffelSeatMapSection> = emptyList()
+)
+
+data class DuffelSeatMapSection(
+    @Json(name = "elements") val elements: List<DuffelSeatMapElement> = emptyList()
+)
+
+data class DuffelSeatMapElement(
+    @Json(name = "type") val type: String = "seat",
+    @Json(name = "designator") val designator: String? = null,
+    @Json(name = "name") val name: String? = null,
+    @Json(name = "available_services") val availableServices: List<DuffelSeatAvailableService>? = emptyList(),
+    @Json(name = "disclosures") val disclosures: List<String>? = emptyList()
+)
+
+data class DuffelSeatAvailableService(
+    @Json(name = "id") val id: String = "",
+    @Json(name = "total_amount") val totalAmount: String = "0.00",
+    @Json(name = "total_currency") val totalCurrency: String = "EUR",
+    @Json(name = "passenger_id") val passengerId: String? = null
+)
+
 

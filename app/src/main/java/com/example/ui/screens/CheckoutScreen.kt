@@ -35,9 +35,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.AirlineSeatReclineNormal
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -129,10 +131,56 @@ fun CheckoutScreen(
         frequentFlyerProgram: String,
         frequentFlyerNumber: String
     ) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    seatConflictError: String? = null,
+    onDismissSeatConflict: () -> Unit = {},
+    onResolveSeatConflict: () -> Unit = {}
 ) {
     var currentStep by rememberSaveable { mutableStateOf(CheckoutWizardStep.TRIP_SUMMARY) }
     var freezePriceEnabled by rememberSaveable { mutableStateOf(false) }
+
+    if (!seatConflictError.isNullOrBlank()) {
+        AlertDialog(
+            onDismissRequest = onDismissSeatConflict,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.EventBusy,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Assento Indisponível (Concorrência)",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = seatConflictError,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDismissSeatConflict()
+                        onResolveSeatConflict()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Escolher Outro Assento")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissSeatConflict) {
+                    Text("Manter Assento Grátis")
+                }
+            }
+        )
+    }
 
     BackHandler {
         when (currentStep) {
