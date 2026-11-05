@@ -233,51 +233,85 @@ fun InteractiveSeatMapGrid(
             }
         }
 
-        // Guia Superior de Colunas: A - B - C | CORREDOR | D - E - F
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Lado Esquerdo: A (Janela), B (Meio), C (Corredor)
+        if (isLoading && seats.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        strokeWidth = 3.dp,
+                        color = cyan
+                    )
+                    Text(
+                        text = "Sincronizando mapa de assentos exclusivo deste voo...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = cyan
+                    )
+                    Text(
+                        text = "Consultando disponibilidade de lugares em tempo real na API da Duffel",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            // Guia Superior de Colunas: A - B - C | CORREDOR | D - E - F
             Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "A (JAN)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = cyan)
-                Text(text = "B (MEI)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(text = "C (COR)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = amber)
+                // Lado Esquerdo: A (Janela), B (Meio), C (Corredor)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Text(text = "A (JAN)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = cyan)
+                    Text(text = "B (MEI)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(text = "C (COR)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = amber)
+                }
+
+                // Corredor Central
+                Box(
+                    modifier = Modifier.width(36.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "🚶",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+
+                // Lado Direito: D (Corredor), E (Meio), F (Janela)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Text(text = "D (COR)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = amber)
+                    Text(text = "E (MEI)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(text = "F (JAN)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = cyan)
+                }
             }
 
-            // Corredor Central
-            Box(
-                modifier = Modifier.width(36.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "🚶",
-                    style = MaterialTheme.typography.labelMedium
-                )
-            }
-
-            // Lado Direito: D (Corredor), E (Meio), F (Janela)
-            Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Text(text = "D (COR)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = amber)
-                Text(text = "E (MEI)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(text = "F (JAN)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = cyan)
-            }
-        }
-
-        // Renderização Linha por Linha da Matriz (6 Colunas A - B - C | D - E - F)
-        rows.forEach { (rowNumber, rowSeats) ->
-            // Separa os assentos da fileira entre Lado Esquerdo (A, B, C) e Lado Direito (D, E, F)
-            val leftSeats = rowSeats.filter { it.column in listOf("A", "B", "C") }
+            // Renderização Linha por Linha da Matriz (6 Colunas A - B - C | D - E - F)
+            rows.forEach { (rowNumber, rowSeats) ->
+                // Separa os assentos da fileira entre Lado Esquerdo (A, B, C) e Lado Direito (D, E, F)
+                val leftSeats = rowSeats.filter { it.column in listOf("A", "B", "C") }
                 .sortedBy { it.column }
             val rightSeats = rowSeats.filter { it.column in listOf("D", "E", "F", "G", "K") }
                 .sortedBy { it.column }
@@ -364,6 +398,7 @@ fun InteractiveSeatMapGrid(
             }
         }
     }
+}
 }
 
 @Composable

@@ -68,13 +68,37 @@ class FlightRepository {
     @Volatile
     private var cachedAmadeusTokenExpiryMs: Long = 0L
 
+    fun isTestModeActive(): Boolean {
+        val useTest = runCatching { BuildConfig.USE_TEST_APIS }.getOrDefault("").trim().lowercase()
+        val nodeEnv = runCatching { BuildConfig.NODE_ENV }.getOrDefault("").trim().lowercase()
+        return useTest == "true" || useTest == "1" || nodeEnv == "development"
+    }
+
+    private fun isValidCredentialKey(key: String): Boolean {
+        return key.isNotBlank() &&
+            !key.contains("PLACEHOLDER", ignoreCase = true) &&
+            !key.contains("...")
+    }
+
     fun getActiveDuffelToken(): String {
+        val inTest = isTestModeActive()
+        if (inTest) {
+            val testToken = runCatching { BuildConfig.DUFFEL_API_TOKEN_TEST }.getOrDefault("").trim()
+            if (isValidCredentialKey(testToken)) return testToken
+            val gen = runCatching { BuildConfig.DUFFEL_API_TOKEN }.getOrDefault("").trim()
+            if (gen.startsWith("duffel_test_") && isValidCredentialKey(gen)) return gen
+        } else {
+            val liveToken = runCatching { BuildConfig.DUFFEL_API_TOKEN_LIVE }.getOrDefault("").trim()
+            if (isValidCredentialKey(liveToken)) return liveToken
+            val gen = runCatching { BuildConfig.DUFFEL_API_TOKEN }.getOrDefault("").trim()
+            if (gen.startsWith("duffel_live_") && isValidCredentialKey(gen)) return gen
+        }
         val t1 = runCatching { BuildConfig.DUFFEL_API_TOKEN }.getOrDefault("").trim()
-        if (t1.isNotBlank() && !t1.contains("PLACEHOLDER", ignoreCase = true)) return t1
+        if (isValidCredentialKey(t1)) return t1
         val t2 = runCatching { BuildConfig.DUFFEL_API_KEY }.getOrDefault("").trim()
-        if (t2.isNotBlank() && !t2.contains("PLACEHOLDER", ignoreCase = true)) return t2
+        if (isValidCredentialKey(t2)) return t2
         val t3 = runCatching { BuildConfig.DU }.getOrDefault("").trim()
-        if (t3.isNotBlank() && !t3.contains("PLACEHOLDER", ignoreCase = true)) return t3
+        if (isValidCredentialKey(t3)) return t3
         return ""
     }
 
@@ -93,7 +117,8 @@ class FlightRepository {
      */
     suspend fun fetchSeatMap(offer: EnrichedFlightOffer): List<com.example.data.model.SeatOption> {
         val spec = offer.aircraftSpec
-        val fallbackSeats = AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass)
+        val seedKey = "${offer.offerId}_${offer.flightNumber}_${offer.originIata}_${offer.destinationIata}_${offer.departureTimeFormatted}"
+        val fallbackSeats = AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass, seedKey)
 
         if (!isDuffelConfigured() || !offer.isLiveDuffelOffer || !offer.offerId.startsWith("off_") ||
             offer.offerId.startsWith("off_deal_") || offer.offerId.startsWith("off_duffel_ndc_")
@@ -214,16 +239,46 @@ class FlightRepository {
         }
     }
 
+    fun getActiveStripePublishableKey(): String {
+        val inTest = isTestModeActive()
+        if (inTest) {
+            val testPk = runCatching { BuildConfig.STRIPE_PUBLISHABLE_KEY_TEST }.getOrDefault("").trim()
+            if (isValidCredentialKey(testPk) && testPk.startsWith("pk_")) return testPk
+            val gen = runCatching { BuildConfig.STRIPE_PUBLISHABLE_KEY }.getOrDefault("").trim()
+            if (gen.startsWith("pk_test_") && isValidCredentialKey(gen)) return gen
+        } else {
+            val livePk = runCatching { BuildConfig.STRIPE_PUBLISHABLE_KEY_LIVE }.getOrDefault("").trim()
+            if (isValidCredentialKey(livePk) && livePk.startsWith("pk_")) return livePk
+            val gen = runCatching { BuildConfig.STRIPE_PUBLISHABLE_KEY }.getOrDefault("").trim()
+            if (gen.startsWith("pk_live_") && isValidCredentialKey(gen)) return gen
+        }
+        val fallback = runCatching { BuildConfig.STRIPE_PUBLISHABLE_KEY }.getOrDefault("").trim()
+        return if (isValidCredentialKey(fallback) && fallback.startsWith("pk_")) fallback else ""
+    }
+
+    fun getActiveStripeSecretKey(): String {
+        val inTest = isTestModeActive()
+        if (inTest) {
+            val testSk = runCatching { BuildConfig.STRIPE_SECRET_KEY_TEST }.getOrDefault("").trim()
+            if (isValidCredentialKey(testSk) && testSk.startsWith("sk_")) return testSk
+            val gen = runCatching { BuildConfig.STRIPE_SECRET_KEY }.getOrDefault("").trim()
+            if (gen.startsWith("sk_test_") && isValidCredentialKey(gen)) return gen
+        } else {
+            val liveSk = runCatching { BuildConfig.STRIPE_SECRET_KEY_LIVE }.getOrDefault("").trim()
+            if (isValidCredentialKey(liveSk) && liveSk.startsWith("sk_")) return liveSk
+            val gen = runCatching { BuildConfig.STRIPE_SECRET_KEY }.getOrDefault("").trim()
+            if (gen.startsWith("sk_live_") && isValidCredentialKey(gen)) return gen
+        }
+        val fallback = runCatching { BuildConfig.STRIPE_SECRET_KEY }.getOrDefault("").trim()
+        return if (isValidCredentialKey(fallback) && fallback.startsWith("sk_")) fallback else ""
+    }
+
     /**
      * Verifica se a Chave Publicável da Stripe está configurada no .env (STRIPE_PUBLISHABLE_KEY).
      * Usada no frontend para tokenizar o cartão.
      */
     fun isStripePublishableConfigured(): Boolean {
-        val key = BuildConfig.STRIPE_PUBLISHABLE_KEY
-        return key.isNotBlank() &&
-            key != "STRIPE_PUBLISHABLE_KEY_PLACEHOLDER" &&
-            key.startsWith("pk_") &&
-            !key.contains("...")
+        return getActiveStripePublishableKey().isNotBlank()
     }
 
     /**
@@ -231,11 +286,7 @@ class FlightRepository {
      * Usada pelo servidor seguro para cobrar o valor final (€3.50 + 3.5% + Tarifa Neta).
      */
     fun isStripeSecretConfigured(): Boolean {
-        val key = BuildConfig.STRIPE_SECRET_KEY
-        return key.isNotBlank() &&
-            key != "STRIPE_SECRET_KEY_PLACEHOLDER" &&
-            key.startsWith("sk_") &&
-            !key.contains("...")
+        return getActiveStripeSecretKey().isNotBlank()
     }
 
     fun isStripeConfigured(): Boolean {
@@ -263,7 +314,7 @@ class FlightRepository {
             } else {
                 val cleanCard = cardNumber.replace(" ", "").replace("-", "")
                 val resp = stripeApi.tokenizeCard(
-                    bearerPublishableKey = "Bearer ${BuildConfig.STRIPE_PUBLISHABLE_KEY}",
+                    bearerPublishableKey = "Bearer ${getActiveStripePublishableKey()}",
                     cardNumber = cleanCard,
                     expMonth = expMonth.trim(),
                     expYear = expYear.trim(),
@@ -1158,7 +1209,7 @@ class FlightRepository {
 
                 // 3.2 Cria e autoriza o PaymentIntent com capture_method = "manual" (bloqueia limite sem capturar)
                 val paymentIntent = stripeApi.createEurPaymentIntentWithToken(
-                    bearerSecretKey = "Bearer ${BuildConfig.STRIPE_SECRET_KEY}",
+                    bearerSecretKey = "Bearer ${getActiveStripeSecretKey()}",
                     idempotencyKey = "auth_$idempotencyKey",
                     amountCents = totalCents,
                     captureMethod = "manual",
@@ -1223,7 +1274,7 @@ class FlightRepository {
                     // ROLLBACK IMEDIATO: Liberta o limite do cartão do cliente na Stripe sem cobrança/estorno
                     runCatching {
                         stripeApi.cancelPaymentIntentHold(
-                            bearerSecretKey = "Bearer ${BuildConfig.STRIPE_SECRET_KEY}",
+                            bearerSecretKey = "Bearer ${getActiveStripeSecretKey()}",
                             paymentIntentId = paymentIntent.id,
                             cancellationReason = "abandoned"
                         )
@@ -1264,7 +1315,7 @@ class FlightRepository {
                 // 3.4 SUCESSO NA DUFFEL -> Captura definitiva na Stripe (paymentIntents.capture)
                 if (paymentIntent.status == "requires_capture") {
                     stripeApi.capturePaymentIntent(
-                        bearerSecretKey = "Bearer ${BuildConfig.STRIPE_SECRET_KEY}",
+                        bearerSecretKey = "Bearer ${getActiveStripeSecretKey()}",
                         idempotencyKey = "capture_$idempotencyKey",
                         paymentIntentId = paymentIntent.id,
                         amountToCaptureCents = totalCents,

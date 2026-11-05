@@ -109,6 +109,7 @@ fun CheckoutScreen(
     markupConfig: MarkupConfig,
     isIssuing: Boolean,
     isStripeLive: Boolean,
+    isTestMode: Boolean = false,
     savedTravelerProfile: SavedTravelerProfile? = null,
     onSaveTravelerVaultNow: (SavedTravelerProfile) -> Unit = {},
     onDeleteTravelerVault: () -> Unit = {},
@@ -842,17 +843,25 @@ fun CheckoutScreen(
                                                 modifier = Modifier.size(16.dp)
                                             )
                                             Text(
-                                                text = "Fluxo Atômico Stripe (capture_method: manual) + Duffel NDC",
+                                                text = if (isTestMode) {
+                                                    "MODO TESTE / SANDBOX ATIVO (Duffel Test + Stripe Test)"
+                                                } else {
+                                                    "Fluxo Atômico Stripe (capture_method: manual) + Duffel NDC"
+                                                },
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF6EE7B7)
+                                                color = if (isTestMode) Color(0xFFFBBF24) else Color(0xFF6EE7B7)
                                             )
                                         }
                                         Text(
-                                            text = "1. Re-valida tarifa/expiração na Duffel (GET /air/offers/:id) • 2. Pré-autoriza cartão na Stripe sem captura imediata • 3. Emite PNR/E-Ticket (POST /air/orders) e captura apenas no sucesso (ou liberta limite na hora via paymentIntents.cancel).",
+                                            text = if (isTestMode) {
+                                                "Ambiente de Testes/Sandbox configurado via .env (USE_TEST_APIS=true ou NODE_ENV=development). Nenhuma cobrança real será efetuada no seu cartão."
+                                            } else {
+                                                "1. Re-valida tarifa/expiração na Duffel (GET /air/offers/:id) • 2. Pré-autoriza cartão na Stripe sem captura imediata • 3. Emite PNR/E-Ticket (POST /air/orders) e captura apenas no sucesso (ou liberta limite na hora via paymentIntents.cancel)."
+                                            },
                                             style = MaterialTheme.typography.bodySmall,
                                             fontSize = 11.sp,
-                                            color = Color(0xFFA7F3D0)
+                                            color = if (isTestMode) Color(0xFFFDE68A) else Color(0xFFA7F3D0)
                                         )
                                     }
                                 }

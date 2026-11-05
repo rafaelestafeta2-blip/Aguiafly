@@ -54,25 +54,28 @@ export class CheckoutFlowError extends Error {
   }
 }
 
+import {
+  getDuffelToken,
+  getStripeSecretKey,
+  isDuffelConfigured as isEnvDuffelConfigured,
+  isStripeSecretConfigured,
+  isTestMode,
+} from "../config/environment";
+
 function getDuffelClient(): Duffel {
   return new Duffel({
-    token: process.env.DUFFEL_API_TOKEN || "",
+    token: getDuffelToken(),
   });
 }
 
 function getStripeClient(): Stripe {
-  return new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+  return new Stripe(getStripeSecretKey(), {
     apiVersion: "2024-06-20",
   });
 }
 
 function isDuffelTokenConfigured(): boolean {
-  const token = process.env.DUFFEL_API_TOKEN || "";
-  return (
-    token.trim().length > 0 &&
-    token !== "DUFFEL_SANDBOX_TOKEN_PLACEHOLDER" &&
-    !token.includes("placeholder")
-  );
+  return isEnvDuffelConfigured();
 }
 
 /**

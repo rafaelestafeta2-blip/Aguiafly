@@ -606,6 +606,7 @@ fun AetherAuthenticatedShell(
                             markupConfig = markupConfig,
                             isIssuing = isIssuing,
                             isStripeLive = bookingViewModel.isStripeLive,
+                            isTestMode = bookingViewModel.isTestModeActive,
                             savedTravelerProfile = savedTravelerProfile,
                             onSaveTravelerVaultNow = bookingViewModel::saveTravelerProfileToVault,
                             onDeleteTravelerVault = bookingViewModel::deleteTravelerProfileFromVault,

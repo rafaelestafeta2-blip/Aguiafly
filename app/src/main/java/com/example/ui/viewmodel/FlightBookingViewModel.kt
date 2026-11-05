@@ -150,19 +150,26 @@ class FlightBookingViewModel(
     private val _seatConflictError = MutableStateFlow<String?>(null)
     val seatConflictError: StateFlow<String?> = _seatConflictError.asStateFlow()
 
+    private var seatMapJob: kotlinx.coroutines.Job? = null
+
     fun clearSeatConflictError() {
         _seatConflictError.value = null
     }
 
     fun loadSeatMapForOffer(offer: EnrichedFlightOffer) {
-        viewModelScope.launch {
-            _isLoadingSeatMap.value = true
+        seatMapJob?.cancel()
+        _seatMap.value = emptyList()
+        _isLoadingSeatMap.value = true
+        seatMapJob = viewModelScope.launch {
             try {
                 val liveSeats = flightRepository.fetchSeatMap(offer)
                 _seatMap.value = liveSeats
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.w("FlightBookingVM", "Erro ao carregar seat map", e)
-                _seatMap.value = com.example.domain.aircraft.AircraftSpecsCatalog.generateSeatMapForSpec(offer.aircraftSpec, offer.cabinClass)
+                Log.w("FlightBookingVM", "Erro ao carregar seat map para offer ${offer.offerId}", e)
+                val seedKey = "${offer.offerId}_${offer.flightNumber}_${offer.originIata}_${offer.destinationIata}_${offer.departureTimeFormatted}"
+                _seatMap.value = com.example.domain.aircraft.AircraftSpecsCatalog.generateSeatMapForSpec(offer.aircraftSpec, offer.cabinClass, seedKey)
             } finally {
                 _isLoadingSeatMap.value = false
             }
@@ -171,6 +178,7 @@ class FlightBookingViewModel(
 
     val isDuffelLive: Boolean = flightRepository.isDuffelConfigured()
     val isStripeLive: Boolean = flightRepository.isStripeConfigured()
+    val isTestModeActive: Boolean = flightRepository.isTestModeActive()
 
     val markupConfig: StateFlow<MarkupConfig> = ticketRepository.observeMarkupConfig(currentUserId)
         .catch { e ->
@@ -552,17 +560,27 @@ class FlightBookingViewModel(
     val ticketExperienceSelections: StateFlow<Map<String, List<com.example.data.model.DestinationExperienceOffer>>> = _ticketExperienceSelections.asStateFlow()
 
     fun selectOffer(offer: EnrichedFlightOffer, resetAncillaries: Boolean = false) {
-        if (resetAncillaries) {
-            // Preserva passes de Sala VIP já selecionados na tela de seleção de voos para a rota
-            val preservedLounges = _selectedAncillaries.value.selectedVipLounges
-            _selectedAncillaries.value = SelectedAncillaries(
-                selectedVipLounges = preservedLounges
+        // Limpa imediatamente o mapa de assentos e redefine a seleção para o novo voo
+        _seatMap.value = emptyList()
+        val currentAnc = _selectedAncillaries.value
+        val baseAncillaries = if (resetAncillaries) {
+            SelectedAncillaries(
+                selectedVipLounges = currentAnc.selectedVipLounges,
+                seatDesignator = "AUTO",
+                selectedSeatServiceId = null
+            )
+        } else {
+            currentAnc.copy(
+                seatDesignator = "AUTO",
+                selectedSeatServiceId = null
             )
         }
+        _selectedAncillaries.value = baseAncillaries
+
         val updatedPricing = MarkupEngine.calculateBreakdown(
             offer.netFareEur,
             markupConfig.value,
-            _selectedAncillaries.value
+            baseAncillaries
         )
         _selectedOffer.value = offer.copy(pricing = updatedPricing)
         loadSeatMapForOffer(offer)

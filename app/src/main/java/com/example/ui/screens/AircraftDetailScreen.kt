@@ -63,8 +63,9 @@ fun AircraftDetailScreen(
     val effectiveSeatMap = if (seatMap.isNotEmpty()) {
         seatMap
     } else {
-        remember(spec, offer.cabinClass) {
-            AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass)
+        remember(spec, offer.cabinClass, offer.offerId) {
+            val seedKey = "${offer.offerId}_${offer.flightNumber}_${offer.originIata}_${offer.destinationIata}_${offer.departureTimeFormatted}"
+            AircraftSpecsCatalog.generateSeatMapForSpec(spec, offer.cabinClass, seedKey)
         }
     }
 
@@ -75,6 +76,7 @@ fun AircraftDetailScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Cabeçalho do Voo e Aeronave
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -94,10 +96,11 @@ fun AircraftDetailScreen(
                     Text(
                         text = spec.fullName,
                         style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${offer.airlineName} ${offer.flightNumber} • Reg: ${spec.sampleRegistration}",
+                        text = "${offer.airlineName} ${offer.flightNumber} • ${offer.originIata} ➔ ${offer.destinationIata} • Reg: ${spec.sampleRegistration}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -105,6 +108,46 @@ fun AircraftDetailScreen(
             }
         }
 
+        // 1. MAPA DE ASSENTOS DIRETAMENTE NO TOPO (Sem precisar rolar a página!)
+        item {
+            InteractiveSeatMapGrid(
+                seats = effectiveSeatMap,
+                selectedSeat = selectedSeat,
+                onSelectSeat = onSelectSeat,
+                isLoading = isLoadingSeatMap
+            )
+        }
+
+        // 2. BOTÃO DE AÇÃO DIRETO ABAIXO DOS ASSENTOS (Fluxo rápido para Checkout)
+        item {
+            val isAutoFree = selectedSeat.isBlank() ||
+                selectedSeat.equals("AUTO", ignoreCase = true) ||
+                selectedSeat.startsWith("AUTO", ignoreCase = true)
+            Button(
+                onClick = onProceedToCheckout,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .testTag("proceed_to_checkout_button"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text(
+                    text = if (isAutoFree) {
+                        "Manter Assento Automático (Grátis €0.00) & Ir para Checkout"
+                    } else {
+                        "Confirmar Assento $selectedSeat & Ir para Checkout"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // 3. FOTO REAL DA AERONAVE (Design Limpo & Premium, sem botões duplicados)
         item {
             AircraftBlueprintBanner(
                 spec = spec,
@@ -112,13 +155,56 @@ fun AircraftDetailScreen(
             )
         }
 
+        // 4. FICHA TÉCNICA E CONFORTO A BORDO
+        item {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Ficha Técnica & Conforto a Bordo",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    AmenitySpecRow(
+                        icon = Icons.Default.AirlineSeatFlat,
+                        title = "Espaço para as Pernas (Pitch) & Layout",
+                        detail = "Business: ${spec.seatPitchBusiness} (${spec.cabinLayoutBusiness}) | Economy: ${spec.seatPitchEconomy} (${spec.cabinLayoutEconomy})"
+                    )
+                    AmenitySpecRow(
+                        icon = Icons.Default.Wifi,
+                        title = "Conectividade a Bordo",
+                        detail = spec.wifiSpecification
+                    )
+                    AmenitySpecRow(
+                        icon = Icons.Default.Bolt,
+                        title = "Energia & Carregamento",
+                        detail = spec.powerOutlets
+                    )
+                    AmenitySpecRow(
+                        icon = Icons.Default.Tv,
+                        title = "Sistema de Entretenimento (IFE)",
+                        detail = spec.ifeDisplay
+                    )
+                }
+            }
+        }
+
+        // 5. GALERIA PLANESPOTTERS (Fotos de Alta Resolução)
         if (photos.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Galeria Planespotters (Alta Resolução)",
+                        text = "Galeria Planespotters (Fotos da Aeronave Real)",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(photos) { photo ->
@@ -149,82 +235,6 @@ fun AircraftDetailScreen(
                         }
                     }
                 }
-            }
-        }
-
-        item {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Ficha Técnica & Conforto a Bordo",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    AmenitySpecRow(
-                        icon = Icons.Default.AirlineSeatFlat,
-                        title = "Espaço para as Pernas (Pitch) & Layout",
-                        detail = "Business: ${spec.seatPitchBusiness} (${spec.cabinLayoutBusiness}) | Economy: ${spec.seatPitchEconomy} (${spec.cabinLayoutEconomy})"
-                    )
-                    AmenitySpecRow(
-                        icon = Icons.Default.Wifi,
-                        title = "Conectividade a Bordo",
-                        detail = spec.wifiSpecification
-                    )
-                    AmenitySpecRow(
-                        icon = Icons.Default.Bolt,
-                        title = "Energia & Carregamento",
-                        detail = spec.powerOutlets
-                    )
-                    AmenitySpecRow(
-                        icon = Icons.Default.Tv,
-                        title = "Sistema de Entretenimento (IFE)",
-                        detail = spec.ifeDisplay
-                    )
-                }
-            }
-        }
-
-        item {
-            InteractiveSeatMapGrid(
-                seats = effectiveSeatMap,
-                selectedSeat = selectedSeat,
-                onSelectSeat = onSelectSeat,
-                isLoading = isLoadingSeatMap
-            )
-        }
-
-        item {
-            val isAutoFree = selectedSeat.isBlank() ||
-                selectedSeat.equals("AUTO", ignoreCase = true) ||
-                selectedSeat.startsWith("AUTO", ignoreCase = true)
-            Button(
-                onClick = onProceedToCheckout,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-                    .testTag("proceed_to_checkout_button"),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            ) {
-                Text(
-                    text = if (isAutoFree) {
-                        "Manter Assento Automático (Grátis €0.00) & Ir para Checkout"
-                    } else {
-                        "Confirmar Assento $selectedSeat & Ir para Checkout"
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }

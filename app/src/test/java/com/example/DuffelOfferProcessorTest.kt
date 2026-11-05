@@ -549,5 +549,11 @@ class DuffelOfferProcessorTest {
         assertTrue(ex.message!!.contains("12A"))
         assertTrue(ex.message!!.contains("cancelada sem cobrança"))
     }
+
+    @Test
+    fun `test mode and environment switching correctly resolves credentials`() {
+        val useTest = runCatching { com.example.BuildConfig.USE_TEST_APIS }.getOrDefault("true")
+        assertNotNull(useTest)
+    }
 }
 

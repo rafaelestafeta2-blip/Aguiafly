@@ -121,7 +121,11 @@ object AircraftSpecsCatalog {
         }
     }
 
-    fun generateSeatMapForSpec(spec: AircraftTechnicalSpec, cabinClass: String): List<SeatOption> {
+    fun generateSeatMapForSpec(
+        spec: AircraftTechnicalSpec,
+        cabinClass: String,
+        seedKey: String = ""
+    ): List<SeatOption> {
         val isBusiness = cabinClass.lowercase() in listOf("business", "first")
         val columns = if (spec.bodyType == BodyType.WIDEBODY && isBusiness) {
             listOf("A", "D", "G", "K")
@@ -131,18 +135,27 @@ object AircraftSpecsCatalog {
             listOf("A", "B", "C", "D", "E", "F")
         }
         val rows = if (isBusiness) 1..6 else 10..17
-        val occupiedSeeds = setOf("1D", "2G", "3A", "4K", "11B", "12C", "14F")
+
+        // Geração dinâmica e determinística por voo (evita que voos diferentes tenham os mesmos assentos ocupados)
+        val effectiveSeed = if (seedKey.isNotBlank()) {
+            seedKey
+        } else {
+            "${spec.icaoCode}_${spec.sampleRegistration}_${cabinClass}"
+        }
 
         return rows.flatMap { row ->
             columns.map { col ->
                 val designator = "$row$col"
+                val hash = kotlin.math.abs((effectiveSeed + "_" + designator).hashCode())
+                // Ocupa ~35% dos assentos de forma realista e totalmente variável por voo
+                val isOccupied = (hash % 100) < 35
                 SeatOption(
                     designator = designator,
                     row = row,
                     column = col,
                     isBusinessSuite = isBusiness,
                     isWindow = col == "A" || col == "K" || col == "F",
-                    isAvailable = designator !in occupiedSeeds,
+                    isAvailable = !isOccupied,
                     extraLegroom = row == rows.first
                 )
             }

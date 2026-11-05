@@ -44,8 +44,19 @@ import {
   cancelStripePaymentIntentHold,
   captureStripePaymentIntent,
 } from "../services/stripeService";
+import { getEnvironmentSummary } from "../config/environment";
 
 export const flightRouter = Router();
+
+/**
+ * Retorna o status de ambiente atual do backend (Sandbox / Test vs Live / Produção).
+ */
+flightRouter.get("/config/mode", (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: getEnvironmentSummary(),
+  });
+});
 
 /**
  * 1. RE-VALIDAÇÃO PRÉ-CHECKOUT DA OFERTA (GET/POST /api/flights/offers/:offerId/revalidate)

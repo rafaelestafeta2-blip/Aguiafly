@@ -1,23 +1,21 @@
 import Stripe from "stripe";
+import {
+  getStripeSecretKey,
+  getStripePublishableKey,
+  isStripeSecretConfigured,
+} from "../config/environment";
+
+export { getStripePublishableKey, isStripeSecretConfigured };
 
 /**
- * Retorna uma instância do Stripe SDK inicializada com a Chave Secreta (STRIPE_SECRET_KEY).
+ * Retorna uma instância do Stripe SDK inicializada com a Chave Secreta ativa (Test ou Live).
  * A Chave Secreta NUNCA é enviada ao frontend ou exposta no dispositivo do utilizador.
  */
 function getStripeClient(): Stripe {
-  const secret = process.env.STRIPE_SECRET_KEY || "";
+  const secret = getStripeSecretKey();
   return new Stripe(secret, {
     apiVersion: "2024-06-20",
   });
-}
-
-export function isStripeSecretConfigured(): boolean {
-  const key = process.env.STRIPE_SECRET_KEY || "";
-  return key.startsWith("sk_") && !key.includes("...") && !key.includes("placeholder");
-}
-
-export function getStripePublishableKey(): string {
-  return process.env.STRIPE_PUBLISHABLE_KEY || "";
 }
 
 export interface PricingCalculationResult {

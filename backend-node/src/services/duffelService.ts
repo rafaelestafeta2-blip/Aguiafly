@@ -4,10 +4,13 @@ import {
   calculateCancellationRefundBreakdown,
   MarkupRuleConfig,
 } from "../middleware/markupMiddleware";
+import { getDuffelToken } from "../config/environment";
 
-const duffel = new Duffel({
-  token: process.env.DUFFEL_API_TOKEN || "",
-});
+function getDuffelClient(): Duffel {
+  return new Duffel({
+    token: getDuffelToken(),
+  });
+}
 
 export interface SearchFlightsInput {
   origin: string;
@@ -29,7 +32,7 @@ export async function searchFlightsWithMarkup(
     type: "adult" as const,
   }));
 
-  const offerRequest = await duffel.offerRequests.create({
+  const offerRequest = await getDuffelClient().offerRequests.create({
     slices: [
       {
         origin: input.origin,
@@ -62,7 +65,7 @@ export async function searchFlightsWithMarkup(
  * para re-validação pré-checkout de expiração (expires_at) e tarifa (total_amount).
  */
 export async function getDuffelOfferById(offerId: string) {
-  const offer = await duffel.offers.get(offerId);
+  const offer = await getDuffelClient().offers.get(offerId);
   return offer.data;
 }
 
@@ -70,7 +73,7 @@ export async function getDuffelOfferById(offerId: string) {
  * Busca o mapa de assentos real de uma oferta na Duffel API.
  */
 export async function getOfferSeatMaps(offerId: string) {
-  const seatMaps = await duffel.seatMaps.get({ offer_id: offerId });
+  const seatMaps = await getDuffelClient().seatMaps.get({ offer_id: offerId });
   return seatMaps.data;
 }
 
@@ -115,7 +118,7 @@ export async function createDuffelOrder(params: {
     .trim()
     .toUpperCase();
 
-  const order = await duffel.orders.create({
+  const order = await getDuffelClient().orders.create({
     type: "instant",
     selected_offers: [params.selectedOfferId],
     payments: [
@@ -150,7 +153,7 @@ export async function createDuffelOrder(params: {
  * para auto-complete inteligente por cidade, país, nome do aeroporto ou código IATA.
  */
 export async function searchPlacesSuggestions(query: string) {
-  const response = await duffel.suggestions.list({ query: query.trim() });
+  const response = await getDuffelClient().suggestions.list({ query: query.trim() });
   return (response.data || [])
     .filter((place: any) => Boolean(place.iata_code || place.city?.iata_code))
     .map((place: any) => {
@@ -200,7 +203,7 @@ export async function createDuffelOrderCancellationQuote(params: {
   originalNetFareEur: number;
   originalMarkupEur?: number;
 }) {
-  const cancellationResponse = await duffel.orderCancellations.create({
+  const cancellationResponse = await getDuffelClient().orderCancellations.create({
     order_id: params.orderId,
   });
 
@@ -228,7 +231,7 @@ export async function createDuffelOrderCancellationQuote(params: {
  * (POST /air/order_cancellations/:id/actions/confirm).
  */
 export async function confirmDuffelOrderCancellation(cancellationId: string) {
-  const confirmed = await duffel.orderCancellations.confirm(cancellationId);
+  const confirmed = await getDuffelClient().orderCancellations.confirm(cancellationId);
   return confirmed.data;
 }
 
