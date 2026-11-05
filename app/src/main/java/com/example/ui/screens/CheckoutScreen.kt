@@ -135,10 +135,174 @@ fun CheckoutScreen(
     onBack: () -> Unit,
     seatConflictError: String? = null,
     onDismissSeatConflict: () -> Unit = {},
-    onResolveSeatConflict: () -> Unit = {}
+    onResolveSeatConflict: () -> Unit = {},
+    priceChangeState: com.example.ui.viewmodel.OfferPriceChangedState? = null,
+    onAcceptUpdatedPrice: () -> Unit = {},
+    onDismissPriceChange: () -> Unit = {},
+    onCancelAndReturnToSearch: () -> Unit = {}
 ) {
     var currentStep by rememberSaveable { mutableStateOf(CheckoutWizardStep.TRIP_SUMMARY) }
     var freezePriceEnabled by rememberSaveable { mutableStateOf(false) }
+
+    if (priceChangeState != null) {
+        AlertDialog(
+            onDismissRequest = onDismissPriceChange,
+            modifier = Modifier.testTag("price_change_modal"),
+            icon = {
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFE5A93C).copy(alpha = 0.15f),
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Flight,
+                            contentDescription = null,
+                            tint = Color(0xFFE5A93C),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+            },
+            title = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Tarifa Atualizada pela Companhia",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${priceChangeState.updatedOffer.originIata} ➔ ${priceChangeState.updatedOffer.destinationIata} • ${priceChangeState.updatedOffer.airlineName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Durante a validação em tempo real com a companhia aérea, o valor deste voo sofreu alteração de inventário.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Preço Anterior:",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "€%.2f".format(priceChangeState.previousGrandTotalEur),
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        textDecoration = TextDecoration.LineThrough
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Novo Preço Atualizado:",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "€%.2f".format(priceChangeState.newGrandTotalEur),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFFE5A93C)
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Diferença:",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                val diff = priceChangeState.diffEur
+                                val diffSign = if (diff > 0) "+" else ""
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (diff > 0) Color(0xFFE5A93C).copy(alpha = 0.15f) else Color(0xFF10B981).copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = "$diffSign€%.2f %s".format(diff, if (diff > 0) "(Acréscimo)" else "(Desconto)"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (diff > 0) Color(0xFFB45309) else Color(0xFF047857),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "Nenhuma cobrança foi efetuada no seu cartão. Deseja aceitar o novo preço de €%.2f e concluir a emissão?".format(priceChangeState.newGrandTotalEur),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = onAcceptUpdatedPrice,
+                    modifier = Modifier.testTag("accept_new_price_button"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF003580)
+                    )
+                ) {
+                    Text(
+                        text = "Aceitar Novo Preço & Pagar (€%.2f)".format(priceChangeState.newGrandTotalEur),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onCancelAndReturnToSearch,
+                    modifier = Modifier.testTag("return_to_search_button")
+                ) {
+                    Text(
+                        text = "Voltar à Busca",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        )
+    }
 
     if (!seatConflictError.isNullOrBlank()) {
         AlertDialog(

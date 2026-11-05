@@ -9,7 +9,7 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 
 object NetworkClient {
 
-    private val moshi: Moshi by lazy {
+    val moshi: Moshi by lazy {
         Moshi.Builder()
             .add(KotlinJsonAdapterFactory())
             .build()

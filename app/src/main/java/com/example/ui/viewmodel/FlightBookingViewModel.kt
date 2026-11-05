@@ -57,6 +57,29 @@ enum class FlightFilterOption(val label: String) {
     WIDEBODY_ONLY("Apenas Widebody")
 }
 
+data class PendingCheckoutParams(
+    val firstName: String,
+    val lastName: String,
+    val email: String,
+    val phone: String,
+    val documentInfo: PassengerDocumentInfo,
+    val cardInput: PaymentCardInput,
+    val saveToTravelerVault: Boolean,
+    val frequentFlyerProgram: String,
+    val frequentFlyerNumber: String,
+    val onOrderIssued: (IssuedTicket) -> Unit
+)
+
+data class OfferPriceChangedState(
+    val updatedOffer: EnrichedFlightOffer,
+    val previousGrandTotalEur: Double,
+    val newGrandTotalEur: Double,
+    val diffEur: Double,
+    val currency: String,
+    val message: String,
+    val pendingParams: PendingCheckoutParams
+)
+
 class FlightBookingViewModel(
     private val ticketRepository: TicketFirestoreRepository,
     private val priceAlertRepository: PriceAlertFirestoreRepository,
@@ -150,10 +173,48 @@ class FlightBookingViewModel(
     private val _seatConflictError = MutableStateFlow<String?>(null)
     val seatConflictError: StateFlow<String?> = _seatConflictError.asStateFlow()
 
+    private val _priceChangeState = MutableStateFlow<OfferPriceChangedState?>(null)
+    val priceChangeState: StateFlow<OfferPriceChangedState?> = _priceChangeState.asStateFlow()
+
     private var seatMapJob: kotlinx.coroutines.Job? = null
 
     fun clearSeatConflictError() {
         _seatConflictError.value = null
+    }
+
+    fun dismissPriceChangeDialog() {
+        _priceChangeState.value = null
+    }
+
+    fun acceptUpdatedPriceAndProceed() {
+        val state = _priceChangeState.value ?: return
+        _priceChangeState.value = null
+
+        // 4. Limpeza e Reset do Ciclo de Vida da Oferta
+        _selectedOffer.value = state.updatedOffer
+        _rawOffers.value = _rawOffers.value.map {
+            if (it.offerId == state.updatedOffer.offerId ||
+                (it.flightNumber == state.updatedOffer.flightNumber && it.departureIso == state.updatedOffer.departureIso)
+            ) {
+                state.updatedOffer
+            } else {
+                it
+            }
+        }
+
+        val params = state.pendingParams
+        completeStripeCheckoutAndIssueOrder(
+            firstName = params.firstName,
+            lastName = params.lastName,
+            email = params.email,
+            phone = params.phone,
+            documentInfo = params.documentInfo,
+            cardInput = params.cardInput,
+            saveToTravelerVault = params.saveToTravelerVault,
+            frequentFlyerProgram = params.frequentFlyerProgram,
+            frequentFlyerNumber = params.frequentFlyerNumber,
+            onOrderIssued = params.onOrderIssued
+        )
     }
 
     fun loadSeatMapForOffer(offer: EnrichedFlightOffer) {
@@ -835,7 +896,28 @@ class FlightBookingViewModel(
                     _statusBanner.value = "E-Ticket ${finalTicket.bookingReference} • $checkInMsg"
                     onOrderIssued(finalTicket)
                 }.onFailure { err ->
-                    if (err is com.example.data.repository.SeatNotAvailableException) {
+                    if (err is com.example.data.repository.OfferPriceChangedException) {
+                        _priceChangeState.value = OfferPriceChangedState(
+                            updatedOffer = err.updatedOffer,
+                            previousGrandTotalEur = err.previousGrandTotalEur,
+                            newGrandTotalEur = err.newGrandTotalEur,
+                            diffEur = err.diffEur,
+                            currency = err.currency,
+                            message = err.message,
+                            pendingParams = PendingCheckoutParams(
+                                firstName = firstName,
+                                lastName = lastName,
+                                email = email,
+                                phone = phone,
+                                documentInfo = documentInfo,
+                                cardInput = cardInput,
+                                saveToTravelerVault = saveToTravelerVault,
+                                frequentFlyerProgram = frequentFlyerProgram,
+                                frequentFlyerNumber = frequentFlyerNumber,
+                                onOrderIssued = onOrderIssued
+                            )
+                        )
+                    } else if (err is com.example.data.repository.SeatNotAvailableException) {
                         _seatConflictError.value = err.message
                         _selectedAncillaries.value = _selectedAncillaries.value.copy(
                             seatDesignator = com.example.data.model.AUTO_FREE_SEAT,

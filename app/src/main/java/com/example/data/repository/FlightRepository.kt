@@ -54,6 +54,20 @@ class SeatNotAvailableException(
     message: String = "O assento $seatDesignator não está mais disponível na companhia aérea (seat_not_available). A pré-autorização foi cancelada sem cobrança."
 ) : IllegalStateException(message)
 
+/**
+ * Exceção de Alteração de Tarifa / Re-validação de Oferta:
+ * Disparada quando a companhia aérea atualiza o valor da tarifa ou quando a oferta original
+ * expira e uma nova tarifa equivalente é mapeada em tempo real pela Duffel API.
+ */
+class OfferPriceChangedException(
+    val updatedOffer: EnrichedFlightOffer,
+    val previousGrandTotalEur: Double,
+    val newGrandTotalEur: Double,
+    val currency: String = "EUR",
+    val diffEur: Double = newGrandTotalEur - previousGrandTotalEur,
+    override val message: String = "A tarifa deste voo mudou de €%.2f para €%.2f.".format(previousGrandTotalEur, newGrandTotalEur)
+) : IllegalStateException(message)
+
 class FlightRepository {
 
     private val duffelApi = NetworkClient.duffelApi
@@ -1084,6 +1098,32 @@ class FlightRepository {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    // Tenta mapear uma oferta substituta ativa em tempo real para a mesma rota
+                    val liveReplacement = try {
+                        searchFlights(
+                            originIata = offer.originIata,
+                            destinationIata = offer.destinationIata,
+                            departureDate = offer.departureIso.take(10),
+                            cabinClass = offer.cabinClass,
+                            markupConfig = markupConfig
+                        ).firstOrNull { it.isLiveDuffelOffer }
+                    } catch (_: Exception) { null }
+
+                    if (liveReplacement != null) {
+                        val newPricing = MarkupEngine.calculateBreakdown(liveReplacement.netFareEur, markupConfig, ancillaries)
+                        val oldPricing = MarkupEngine.calculateBreakdown(offer.netFareEur, markupConfig, ancillaries)
+                        return Result.failure(
+                            OfferPriceChangedException(
+                                updatedOffer = liveReplacement,
+                                previousGrandTotalEur = oldPricing.grandTotalEur,
+                                newGrandTotalEur = newPricing.grandTotalEur,
+                                currency = "EUR",
+                                diffEur = newPricing.grandTotalEur - oldPricing.grandTotalEur,
+                                message = "A oferta anterior expirou na companhia aérea. Localizamos uma nova tarifa ativa de ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme para continuar."
+                            )
+                        )
+                    }
+
                     return Result.failure(
                         IllegalStateException(
                             "[OFFER_EXPIRED] Esta oferta expirou na companhia aérea (${e.localizedMessage}). Atualize a busca para ver tarifas ativas."
@@ -1099,6 +1139,32 @@ class FlightRepository {
                         false
                     }
                     if (expired) {
+                        // Tenta localizar oferta fresca para a mesma rota
+                        val liveReplacement = try {
+                            searchFlights(
+                                originIata = offer.originIata,
+                                destinationIata = offer.destinationIata,
+                                departureDate = offer.departureIso.take(10),
+                                cabinClass = offer.cabinClass,
+                                markupConfig = markupConfig
+                            ).firstOrNull { it.isLiveDuffelOffer }
+                        } catch (_: Exception) { null }
+
+                        if (liveReplacement != null) {
+                            val newPricing = MarkupEngine.calculateBreakdown(liveReplacement.netFareEur, markupConfig, ancillaries)
+                            val oldPricing = MarkupEngine.calculateBreakdown(offer.netFareEur, markupConfig, ancillaries)
+                            return Result.failure(
+                                OfferPriceChangedException(
+                                    updatedOffer = liveReplacement,
+                                    previousGrandTotalEur = oldPricing.grandTotalEur,
+                                    newGrandTotalEur = newPricing.grandTotalEur,
+                                    currency = "EUR",
+                                    diffEur = newPricing.grandTotalEur - oldPricing.grandTotalEur,
+                                    message = "A tarifa anterior atingiu o tempo limite (expires_at). Localizamos uma nova tarifa ativa de ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme para prosseguir."
+                                )
+                            )
+                        }
+
                         return Result.failure(
                             IllegalStateException(
                                 "[OFFER_EXPIRED] O tempo limite desta oferta expirou na companhia aérea ($expiresIso). Por favor, selecione novamente o voo."
@@ -1112,13 +1178,25 @@ class FlightRepository {
                 if (kotlin.math.abs(latestNetEur - offer.netFareEur) > 0.02) {
                     val newPricing = MarkupEngine.calculateBreakdown(latestNetEur, markupConfig, ancillaries)
                     val oldPricing = MarkupEngine.calculateBreakdown(offer.netFareEur, markupConfig, ancillaries)
+                    val updatedOffer = offer.copy(
+                        offerId = revalidatedDto.id.ifBlank { offer.offerId },
+                        netFareEur = latestNetEur
+                    )
                     return Result.failure(
-                        IllegalStateException(
-                            "[PRICE_CHANGED] A tarifa deste voo mudou na companhia aérea de ${MarkupEngine.formatEur(oldPricing.grandTotalEur)} para ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme o novo valor antes de prosseguir."
+                        OfferPriceChangedException(
+                            updatedOffer = updatedOffer,
+                            previousGrandTotalEur = oldPricing.grandTotalEur,
+                            newGrandTotalEur = newPricing.grandTotalEur,
+                            currency = revalidatedDto.totalCurrency.ifBlank { "EUR" },
+                            diffEur = newPricing.grandTotalEur - oldPricing.grandTotalEur,
+                            message = "A companhia aérea atualizou a tarifa deste voo de ${MarkupEngine.formatEur(oldPricing.grandTotalEur)} para ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme o novo valor antes de prosseguir."
                         )
                     )
                 }
-                offer.copy(netFareEur = latestNetEur)
+                offer.copy(
+                    offerId = revalidatedDto.id.ifBlank { offer.offerId },
+                    netFareEur = latestNetEur
+                )
             } else {
                 val liveCandidates = searchFlights(
                     originIata = offer.originIata,
@@ -1128,12 +1206,30 @@ class FlightRepository {
                     markupConfig = markupConfig
                 ).filter { it.isLiveDuffelOffer }
 
-                liveCandidates.minByOrNull { it.netFareEur }
+                val bestCandidate = liveCandidates.minByOrNull { it.netFareEur }
                     ?: return Result.failure(
                         IllegalStateException(
                             "Nenhuma oferta ao vivo retornada pela Duffel API para ${offer.originIata} ➔ ${offer.destinationIata}. Verifique seu DUFFEL_API_TOKEN."
                         )
                     )
+
+                if (bestCandidate.offerId != offer.offerId || kotlin.math.abs(bestCandidate.netFareEur - offer.netFareEur) > 0.02) {
+                    val newPricing = MarkupEngine.calculateBreakdown(bestCandidate.netFareEur, markupConfig, ancillaries)
+                    val oldPricing = MarkupEngine.calculateBreakdown(offer.netFareEur, markupConfig, ancillaries)
+                    if (kotlin.math.abs(newPricing.grandTotalEur - oldPricing.grandTotalEur) > 0.02) {
+                        return Result.failure(
+                            OfferPriceChangedException(
+                                updatedOffer = bestCandidate,
+                                previousGrandTotalEur = oldPricing.grandTotalEur,
+                                newGrandTotalEur = newPricing.grandTotalEur,
+                                currency = "EUR",
+                                diffEur = newPricing.grandTotalEur - oldPricing.grandTotalEur,
+                                message = "A tarifa deste voo mudou para ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme o novo valor antes de prosseguir."
+                            )
+                        )
+                    }
+                }
+                bestCandidate
             }
 
             // =========================================================================
@@ -1300,6 +1396,61 @@ class FlightRepository {
                                 message = "O assento ${ancillaries.seatDesignator} não está mais disponível na companhia aérea (seat_not_available). A pré-autorização no seu cartão foi cancelada sem custos. Por favor, escolha outro lugar no mapa de assentos."
                             )
                         )
+                    }
+
+                    val isPriceChanged = errString.contains("price_changed") || errBody.contains("price_changed")
+                    if (isPriceChanged) {
+                        val refreshedOfferDto = runCatching {
+                            duffelApi.getOfferById("Bearer ${getActiveDuffelToken()}", resolvedLiveOffer.offerId).data
+                        }.getOrNull()
+                        val latestNetEur = refreshedOfferDto?.totalAmount?.toDoubleOrNull() ?: resolvedLiveOffer.netFareEur
+                        val newPricing = MarkupEngine.calculateBreakdown(latestNetEur, markupConfig, ancillaries)
+                        val oldPricing = MarkupEngine.calculateBreakdown(resolvedLiveOffer.netFareEur, markupConfig, ancillaries)
+                        val updatedOffer = resolvedLiveOffer.copy(
+                            offerId = refreshedOfferDto?.id?.ifBlank { resolvedLiveOffer.offerId } ?: resolvedLiveOffer.offerId,
+                            netFareEur = latestNetEur
+                        )
+                        return Result.failure(
+                            OfferPriceChangedException(
+                                updatedOffer = updatedOffer,
+                                previousGrandTotalEur = oldPricing.grandTotalEur,
+                                newGrandTotalEur = newPricing.grandTotalEur,
+                                currency = refreshedOfferDto?.totalCurrency?.ifBlank { "EUR" } ?: "EUR",
+                                diffEur = newPricing.grandTotalEur - oldPricing.grandTotalEur,
+                                message = "A tarifa deste voo foi atualizada pela companhia aérea de ${MarkupEngine.formatEur(oldPricing.grandTotalEur)} para ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme o novo valor para concluir a emissão."
+                            )
+                        )
+                    }
+
+                    val isOfferExpired = errString.contains("offer_no_longer_available") ||
+                        errString.contains("expired") ||
+                        errBody.contains("offer_no_longer_available") ||
+                        errBody.contains("expired")
+                    if (isOfferExpired) {
+                        val liveCandidates = runCatching {
+                            searchFlights(
+                                originIata = resolvedLiveOffer.originIata,
+                                destinationIata = resolvedLiveOffer.destinationIata,
+                                departureDate = resolvedLiveOffer.departureIso.take(10),
+                                cabinClass = resolvedLiveOffer.cabinClass,
+                                markupConfig = markupConfig
+                            ).filter { it.isLiveDuffelOffer }
+                        }.getOrNull().orEmpty()
+                        val replacement = liveCandidates.firstOrNull()
+                        if (replacement != null) {
+                            val newPricing = MarkupEngine.calculateBreakdown(replacement.netFareEur, markupConfig, ancillaries)
+                            val oldPricing = MarkupEngine.calculateBreakdown(resolvedLiveOffer.netFareEur, markupConfig, ancillaries)
+                            return Result.failure(
+                                OfferPriceChangedException(
+                                    updatedOffer = replacement,
+                                    previousGrandTotalEur = oldPricing.grandTotalEur,
+                                    newGrandTotalEur = newPricing.grandTotalEur,
+                                    currency = "EUR",
+                                    diffEur = newPricing.grandTotalEur - oldPricing.grandTotalEur,
+                                    message = "A tarifa original expirou na companhia aérea. Localizamos uma nova tarifa ativa de ${MarkupEngine.formatEur(newPricing.grandTotalEur)}. Confirme para continuar."
+                                )
+                            )
+                        }
                     }
 
                     return Result.failure(
@@ -1503,6 +1654,28 @@ class FlightRepository {
                 com.example.domain.security.TransactionIdempotencyGuard.releaseOnFailure(idempotencyKey)
                 val codePrefix = response.errorCode ?: response.code ?: "CHECKOUT_REJECTED"
                 val detailMsg = response.message ?: response.error ?: "Não foi possível concluir a emissão."
+
+                if (codePrefix == "PRICE_CHANGED" || codePrefix.contains("PRICE_CHANGED")) {
+                    val details = response.details
+                    val latestNet = details?.currentNetAmountEur ?: offer.netFareEur
+                    val updatedOffer = offer.copy(
+                        offerId = details?.offerId ?: offer.offerId,
+                        netFareEur = latestNet
+                    )
+                    val prevTotal = details?.previousGrandTotalEur ?: finalPricing.grandTotalEur
+                    val newTotal = details?.currentGrandTotalEur ?: finalPricing.grandTotalEur
+                    return Result.failure(
+                        OfferPriceChangedException(
+                            updatedOffer = updatedOffer,
+                            previousGrandTotalEur = prevTotal,
+                            newGrandTotalEur = newTotal,
+                            currency = details?.currency ?: "EUR",
+                            diffEur = newTotal - prevTotal,
+                            message = detailMsg
+                        )
+                    )
+                }
+
                 return Result.failure(IllegalStateException("[$codePrefix] $detailMsg"))
             }
 
@@ -1539,6 +1712,35 @@ class FlightRepository {
             throw e
         } catch (e: Exception) {
             com.example.domain.security.TransactionIdempotencyGuard.releaseOnFailure(idempotencyKey)
+            if (e is retrofit2.HttpException) {
+                val errorBodyStr = runCatching { e.response()?.errorBody()?.string() }.getOrNull().orEmpty()
+                if (errorBodyStr.isNotBlank()) {
+                    val parsed = runCatching {
+                        NetworkClient.moshi.adapter(com.example.data.remote.BackendAtomicCheckoutResponse::class.java).fromJson(errorBodyStr)
+                    }.getOrNull()
+
+                    val code = parsed?.errorCode ?: parsed?.code ?: ""
+                    if (code == "PRICE_CHANGED" || errorBodyStr.contains("PRICE_CHANGED")) {
+                        val details = parsed?.details
+                        val updatedOffer = offer.copy(
+                            offerId = details?.offerId ?: offer.offerId,
+                            netFareEur = details?.currentNetAmountEur ?: offer.netFareEur
+                        )
+                        val prevTotal = details?.previousGrandTotalEur ?: finalPricing.grandTotalEur
+                        val newTotal = details?.currentGrandTotalEur ?: finalPricing.grandTotalEur
+                        return Result.failure(
+                            OfferPriceChangedException(
+                                updatedOffer = updatedOffer,
+                                previousGrandTotalEur = prevTotal,
+                                newGrandTotalEur = newTotal,
+                                currency = details?.currency ?: "EUR",
+                                diffEur = newTotal - prevTotal,
+                                message = parsed?.error ?: parsed?.message ?: "A companhia aérea atualizou a tarifa deste voo. Confirme o novo valor antes de prosseguir."
+                            )
+                        )
+                    }
+                }
+            }
             Result.failure(e)
         }
     }

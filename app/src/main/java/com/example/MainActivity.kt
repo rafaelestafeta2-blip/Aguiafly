@@ -282,6 +282,7 @@ fun AetherAuthenticatedShell(
     val liveSeatMap by bookingViewModel.seatMap.collectAsStateWithLifecycle()
     val isLoadingSeatMap by bookingViewModel.isLoadingSeatMap.collectAsStateWithLifecycle()
     val seatConflictError by bookingViewModel.seatConflictError.collectAsStateWithLifecycle()
+    val priceChangeState by bookingViewModel.priceChangeState.collectAsStateWithLifecycle()
 
     val unifiedPackages by packagesViewModel.unifiedPackages.collectAsStateWithLifecycle()
     val adminCmsPackages by packagesViewModel.adminCmsPackages.collectAsStateWithLifecycle()
@@ -639,7 +640,14 @@ fun AetherAuthenticatedShell(
                             onBack = { currentScreen = MainDestination.SEARCH },
                             seatConflictError = seatConflictError,
                             onDismissSeatConflict = bookingViewModel::clearSeatConflictError,
-                            onResolveSeatConflict = { currentScreen = MainDestination.AIRCRAFT_DETAIL }
+                            onResolveSeatConflict = { currentScreen = MainDestination.AIRCRAFT_DETAIL },
+                            priceChangeState = priceChangeState,
+                            onAcceptUpdatedPrice = bookingViewModel::acceptUpdatedPriceAndProceed,
+                            onDismissPriceChange = bookingViewModel::dismissPriceChangeDialog,
+                            onCancelAndReturnToSearch = {
+                                bookingViewModel.dismissPriceChangeDialog()
+                                currentScreen = MainDestination.SEARCH
+                            }
                         )
                     } else {
                         currentScreen = MainDestination.SEARCH

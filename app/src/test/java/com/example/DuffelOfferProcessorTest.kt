@@ -555,5 +555,63 @@ class DuffelOfferProcessorTest {
         val useTest = runCatching { com.example.BuildConfig.USE_TEST_APIS }.getOrDefault("true")
         assertNotNull(useTest)
     }
+
+    @Test
+    fun `OfferPriceChangedException correctly exposes updated offer, price delta, and transparent message`() {
+        val rawJson = """
+            {
+              "data": {
+                "id": "orq_test_revalidation",
+                "offers": [
+                  {
+                    "id": "off_revalidated_live_999",
+                    "total_amount": "395.00",
+                    "total_currency": "EUR",
+                    "owner": { "name": "TAP Portugal", "iata_code": "TP" },
+                    "slices": [
+                      {
+                        "duration": "PT1H25M",
+                        "origin": { "iata_code": "LIS", "name": "Humberto Delgado", "city_name": "Lisboa" },
+                        "destination": { "iata_code": "MAD", "name": "Barajas", "city_name": "Madrid" },
+                        "segments": [
+                          {
+                            "id": "seg_1",
+                            "departing_at": "2026-11-15T10:00:00Z",
+                            "arriving_at": "2026-11-15T11:25:00Z",
+                            "origin": { "iata_code": "LIS", "name": "Humberto Delgado", "city_name": "Lisboa" },
+                            "destination": { "iata_code": "MAD", "name": "Barajas", "city_name": "Madrid" },
+                            "marketing_carrier": { "name": "TAP Portugal", "iata_code": "TP" },
+                            "marketing_carrier_flight_number": "1014",
+                            "aircraft": { "iata_code": "32Q", "name": "Airbus A321neo" }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+        val processed = DuffelOfferProcessor.processRawDuffelJson(rawJson, "LIS", "MAD")
+        val updatedOffer = processed.first()
+
+        val ex = com.example.data.repository.OfferPriceChangedException(
+            updatedOffer = updatedOffer,
+            previousGrandTotalEur = 384.38,
+            newGrandTotalEur = 410.00,
+            currency = "EUR",
+            diffEur = 25.62,
+            message = "A tarifa deste voo mudou na companhia aérea de €384.38 para €410.00. Confirme o novo valor antes de prosseguir."
+        )
+
+        assertEquals("off_revalidated_live_999", ex.updatedOffer.offerId)
+        assertEquals(384.38, ex.previousGrandTotalEur, 0.001)
+        assertEquals(410.00, ex.newGrandTotalEur, 0.001)
+        assertEquals(25.62, ex.diffEur, 0.001)
+        assertEquals("EUR", ex.currency)
+        assertTrue(ex.message.contains("384.38"))
+        assertTrue(ex.message.contains("410.00"))
+    }
 }
+
 

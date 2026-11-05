@@ -63,12 +63,22 @@ data class BackendTripBookingSummaryDto(
     @Json(name = "totalPaidEur") val totalPaidEur: Double = 0.0
 )
 
+data class BackendPriceChangeDetailsDto(
+    @Json(name = "offerId") val offerId: String? = null,
+    @Json(name = "previousNetAmountEur") val previousNetAmountEur: Double? = null,
+    @Json(name = "currentNetAmountEur") val currentNetAmountEur: Double? = null,
+    @Json(name = "previousGrandTotalEur") val previousGrandTotalEur: Double? = null,
+    @Json(name = "currentGrandTotalEur") val currentGrandTotalEur: Double? = null,
+    @Json(name = "currency") val currency: String? = "EUR"
+)
+
 data class BackendAtomicCheckoutResponse(
     @Json(name = "success") val success: Boolean = false,
     @Json(name = "code") val code: String? = null,
     @Json(name = "errorCode") val errorCode: String? = null,
     @Json(name = "message") val message: String? = null,
     @Json(name = "error") val error: String? = null,
+    @Json(name = "details") val details: BackendPriceChangeDetailsDto? = null,
     @Json(name = "booking") val booking: BackendTripBookingSummaryDto? = null
 )
 

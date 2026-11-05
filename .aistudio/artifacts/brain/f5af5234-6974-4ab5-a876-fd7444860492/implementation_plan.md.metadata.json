@@ -1,6 +1,6 @@
 {
-  "summary": "Plano de Blindagem de Segurança e Melhorias de Qualidade do AguiaFly: bloqueio de captura de ecrã no Checkout (FLAG_SECURE) com mascaramento de passaporte, validação matemática de cartão (Algoritmo de Luhn), validade de passaporte e idempotência anti-duplicidade, além de configuração estrita de rede HTTPS/TLS, cache local criptografado (AES-GCM via Android Keystore) e Painel de Auditoria de Segurança no Perfil.",
-  "updatedAt": "2026-11-03T19:14:43.165337798Z",
+  "summary": "Implementação completa e verificada do fluxo de revalidação de ofertas e tratamento de alteração de preços (Price Change / Offer Re-validation) tanto no backend quanto no aplicativo Android (AguiaFly). Inclui interceptação de PRICE_CHANGED e OFFER_EXPIRED, extração em tempo real da nova tarifa, modal Material 3 amigável com comparativo anterior vs novo preço e botões 'Aceitar Novo Preço & Pagar' e 'Voltar à Busca', além da sincronização dinâmica do offer_id. Todos os 11 testes unitários passaram e o applet compila perfeitamente.",
+  "updatedAt": "2026-11-05T18:19:42.724412134Z",
   "requestFeedback": true,
   "userFacing": true
 }

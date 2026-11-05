@@ -640,11 +640,29 @@ export async function executeAtomicFlightCheckout(
     }
 
     if (exactDuffelCode.includes("price_changed")) {
+      let freshNetEur = pricing.netFareEur;
+      let freshOfferId = input.offerId;
+      try {
+        if (isDuffelTokenConfigured() && input.offerId.startsWith("off_")) {
+          const duffel = getDuffelClient();
+          const refreshed = await duffel.offers.get(input.offerId);
+          freshNetEur = parseFloat(refreshed.data.total_amount || "0") || pricing.netFareEur;
+          freshOfferId = refreshed.data.id || input.offerId;
+        }
+      } catch (_e) {}
+      const updatedPricing = calculateStripeFinalFare(freshNetEur, input.ancillariesAmountEur || 0);
+
       throw new CheckoutFlowError(
         "PRICE_CHANGED",
-        `O preço da tarifa mudou na companhia aérea (${exactDuffelMessage}). A pré-autorização do seu cartão foi cancelada imediatamente sem qualquer cobrança.`,
+        `O preço da tarifa mudou na companhia aérea (${exactDuffelMessage}). A pré-autorização anterior foi liberada. Confirme o novo valor para concluir a emissão.`,
         409,
         {
+          offerId: freshOfferId,
+          previousNetAmountEur: Number(pricing.netFareEur.toFixed(2)),
+          currentNetAmountEur: Number(freshNetEur.toFixed(2)),
+          previousGrandTotalEur: pricing.grandTotalEur,
+          currentGrandTotalEur: updatedPricing.grandTotalEur,
+          currency: "EUR",
           bookingId,
           paymentIntentId,
           stripeHoldReleased,
