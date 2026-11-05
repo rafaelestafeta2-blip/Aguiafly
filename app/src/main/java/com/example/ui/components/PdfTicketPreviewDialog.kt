@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -34,6 +35,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,7 +66,20 @@ fun PdfTicketPreviewDialog(
     }
     var downloadStatusMessage by remember { mutableStateOf<String?>(null) }
     val gold = MaterialTheme.colorScheme.primary
-    val emerald = MaterialTheme.colorScheme.tertiary
+    val emerald = Color(0xFF10B981)
+
+    // Faz o download automático para a pasta Downloads assim que o modal de PDF é aberto
+    LaunchedEffect(ticket.bookingReference) {
+        val res = TicketPdfExporter.saveTicketPdfToDownloads(
+            context = context,
+            ticket = ticket,
+            openExternalViewerIfAvailable = false
+        )
+        downloadStatusMessage = res.fold(
+            onSuccess = { path -> "✅ PDF baixado automaticamente em: $path" },
+            onFailure = { err -> "⚠️ Aviso ao salvar PDF: ${err.localizedMessage}" }
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -84,7 +99,7 @@ fun PdfTicketPreviewDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Cabeçalho do Visualizador
                 Row(
@@ -100,7 +115,7 @@ fun PdfTicketPreviewDialog(
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
-                            text = "Reserva PNR ${ticket.bookingReference} • Documento pronto para download ou impressão",
+                            text = "Reserva PNR ${ticket.bookingReference} • Salvo na pasta Downloads do telemóvel",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFBFD4F2)
                         )
@@ -117,11 +132,11 @@ fun PdfTicketPreviewDialog(
                     }
                 }
 
-                // Banner de confirmação quando o usuário baixa o PDF em Downloads
+                // Banner de confirmação do download
                 downloadStatusMessage?.let { statusMsg ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = emerald.copy(alpha = 0.16f),
+                        color = emerald.copy(alpha = 0.18f),
                         border = BorderStroke(1.dp, emerald)
                     ) {
                         Row(
@@ -170,13 +185,17 @@ fun PdfTicketPreviewDialog(
                     )
                 }
 
-                // Botão Principal: Baixar PDF Direto na Pasta Downloads
+                // Botão Principal: Baixar & Abrir PDF no Leitor do Telemóvel
                 Button(
                     onClick = {
-                        val res = TicketPdfExporter.saveTicketPdfToDownloads(context, ticket)
+                        val res = TicketPdfExporter.saveTicketPdfToDownloads(
+                            context = context,
+                            ticket = ticket,
+                            openExternalViewerIfAvailable = true
+                        )
                         downloadStatusMessage = res.fold(
-                            onSuccess = { path -> "PDF salvo com sucesso em: $path" },
-                            onFailure = { err -> "Aviso ao salvar: ${err.localizedMessage}" }
+                            onSuccess = { path -> "✅ Guardado e atualizado em: $path (Verifique também as Notificações)" },
+                            onFailure = { err -> "⚠️ Aviso ao salvar: ${err.localizedMessage}" }
                         )
                     },
                     modifier = Modifier
@@ -191,18 +210,18 @@ fun PdfTicketPreviewDialog(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Download,
-                        contentDescription = "Baixar PDF",
+                        contentDescription = "Baixar e Abrir PDF",
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Baixar PDF no Telemóvel (Pasta Downloads)",
+                        text = "Baixar & Abrir PDF (Pasta Downloads)",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
 
-                // Botões Secundários: Compartilhar no WhatsApp/E-mail e Imprimir
+                // Botões Secundários: Compartilhar / Salvar no Drive ou WhatsApp e Imprimir A4
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -218,13 +237,13 @@ fun PdfTicketPreviewDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Share,
-                            contentDescription = "Compartilhar PDF",
+                            contentDescription = "Enviar ou Salvar PDF",
                             tint = gold,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "WhatsApp / E-mail",
+                            text = "Enviar / Guardar PDF",
                             style = MaterialTheme.typography.labelLarge,
                             color = gold,
                             fontWeight = FontWeight.Bold
@@ -248,7 +267,7 @@ fun PdfTicketPreviewDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Imprimir A4",
+                            text = "Imprimir / Salvar A4",
                             style = MaterialTheme.typography.labelLarge,
                             color = Color(0xFF38BDF8),
                             fontWeight = FontWeight.Bold

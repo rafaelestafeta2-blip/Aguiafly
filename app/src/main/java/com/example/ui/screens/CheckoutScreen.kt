@@ -1630,6 +1630,129 @@ private fun EdreamsTripSummaryStepContent(
                 }
             }
         }
+
+        // Cartão Branco Limpo "Volta" quando a passagem for Ida e Volta (Round-Trip)
+        if (offer.isRoundTrip && offer.returnDateIso.isNotBlank()) {
+            item {
+                val formattedReturnShortDate = remember(offer.returnDateIso) {
+                    runCatching {
+                        val d = LocalDate.parse(offer.returnDateIso.take(10))
+                        val fmt = DateTimeFormatter.ofPattern("EEE, dd MMM", Locale("pt", "PT"))
+                        d.format(fmt).replace(".", "")
+                    }.getOrDefault(offer.returnDateIso.take(10))
+                }
+                val retDepTime = offer.returnDepartureTimeFormatted.ifBlank { "16:40" }
+                val retArrTime = offer.returnArrivalTimeFormatted.ifBlank { "20:15" }
+                val retFlightNum = offer.returnFlightNumber.ifBlank { "${offer.airlineIata}402" }
+                val retDur = offer.returnDurationFormatted.ifBlank { offer.durationFormatted }
+
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    shadowElevation = 3.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .testTag("edreams_return_summary_card")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 22.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Volta",
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF005AA3)
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = Color(0xFFEFF6FF)
+                                ) {
+                                    Text(
+                                        text = formattedReturnShortDate,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E3A8A),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "🕒 $retDur",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF475569)
+                            )
+                        }
+
+                        HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "$retDepTime • ${offer.destinationIata} (${destPlace.airportName})",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = "${offer.destinationCity} (${destPlace.countryName})",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            AirlineLogoBadge(
+                                airlineIata = offer.airlineIata,
+                                airlineName = offer.airlineName,
+                                size = 30.dp
+                            )
+                            Text(
+                                text = "${offer.airlineName} • Voo $retFlightNum • $cabinLabel",
+                                fontSize = 13.sp,
+                                color = Color(0xFF475569),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "$retArrTime • ${offer.originIata} (${originPlace.airportName})",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E293B)
+                            )
+                            Text(
+                                text = "${offer.originCity} (${originPlace.countryName})",
+                                fontSize = 13.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -94,7 +94,7 @@ export async function createDuffelOrder(params: {
   gender?: "m" | "f";
   title?: "mr" | "ms" | "mrs" | "miss" | "dr";
   identityDocuments?: Array<{
-    type: "passport";
+    type: "passport" | "identity_card";
     unique_identifier: string;
     expires_on: string;
     issuing_country_code: string;

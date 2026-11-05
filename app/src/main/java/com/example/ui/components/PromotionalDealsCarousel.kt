@@ -52,6 +52,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -73,38 +75,42 @@ fun PromotionalDealsCarousel(
     onSelectDealToBook: (TravelPromotionDeal) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val categories = listOf("Todas", "Europa", "Américas", "Mundo")
+    val categories = PromotionalDealsCatalog.CATEGORIES
     var selectedCategory by remember { mutableStateOf("Todas") }
+    var hourBucket by remember { mutableStateOf(PromotionalDealsCatalog.currentHourBucket()) }
+
     val originPlace = remember(currentOriginIata) {
         PlaceAutocompleteCatalog.resolveByIata(currentOriginIata)
     }
 
-    val deals = remember(selectedCategory, originPlace, dealsList) {
-        val filtered = if (selectedCategory.equals("Todas", true)) {
-            dealsList
-        } else {
-            dealsList.filter { it.category.equals(selectedCategory, true) }
+    // Atualização automática a cada 1 hora (3.600.000 ms) para rodar novas ofertas globais
+    LaunchedEffect(originPlace.iataCode) {
+        while (true) {
+            delay(3_600_000L)
+            hourBucket = PromotionalDealsCatalog.currentHourBucket()
+            onRefreshFares()
         }
-        filtered.map { deal ->
-            if (deal.destinationIata.equals(originPlace.iataCode, true)) {
-                val altDest = if (originPlace.iataCode == "LIS") {
-                    PlaceAutocompleteCatalog.resolveByIata("CDG")
-                } else {
-                    PlaceAutocompleteCatalog.resolveByIata("LIS")
-                }
-                deal.copy(
-                    originIata = originPlace.iataCode,
-                    originCity = originPlace.cityName,
-                    destinationIata = altDest.iataCode,
-                    destinationCity = altDest.cityName,
-                    destinationCountry = altDest.countryName
-                )
-            } else {
-                deal.copy(
-                    originIata = originPlace.iataCode,
-                    originCity = originPlace.cityName
+    }
+
+    val deals = remember(selectedCategory, originPlace.iataCode, dealsList, hourBucket) {
+        val adaptedLiveMap = dealsList
+            .filter { !it.destinationIata.equals(originPlace.iataCode, ignoreCase = true) }
+            .associateBy({ it.destinationIata.uppercase() }) { rawDeal ->
+                PromotionalDealsCatalog.adaptDealToOrigin(
+                    deal = rawDeal,
+                    currentOrigin = originPlace.iataCode,
+                    hourBucket = hourBucket
                 )
             }
+
+        val catalogRotated = PromotionalDealsCatalog.getFilteredDeals(
+            category = selectedCategory,
+            currentOrigin = originPlace.iataCode,
+            hourBucket = hourBucket
+        )
+
+        catalogRotated.map { catDeal ->
+            adaptedLiveMap[catDeal.destinationIata.uppercase()] ?: catDeal
         }
     }
 
@@ -131,7 +137,7 @@ fun PromotionalDealsCarousel(
             .testTag("promotional_deals_carousel_section"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Cabeçalho da Seção (Sem indicadores técnicos de status de API)
+        // Cabeçalho da Seção
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -139,7 +145,8 @@ fun PromotionalDealsCarousel(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
@@ -163,7 +170,7 @@ fun PromotionalDealsCarousel(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Menores tarifas com taxas inclusas • Clique no destino para reservar",
+                        text = "🔄 Atualizado a cada 1h • ${deals.size} destinos globais verificados",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -172,7 +179,10 @@ fun PromotionalDealsCarousel(
 
             // Botão de Refresh para buscar os preços mais baixos
             IconButton(
-                onClick = onRefreshFares,
+                onClick = {
+                    hourBucket = PromotionalDealsCatalog.currentHourBucket() + 1L
+                    onRefreshFares()
+                },
                 enabled = !isRefreshingFares,
                 modifier = Modifier
                     .size(36.dp)
@@ -194,9 +204,11 @@ fun PromotionalDealsCarousel(
             }
         }
 
-        // Filtros Rápidos de Categoria (Todas, Europa, Américas, Mundo)
+        // Filtros Rápidos de Categoria (Todas, Europa, Brasil, Américas, Ásia & Dubai, África & Oceania, Praias)
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             categories.forEach { cat ->

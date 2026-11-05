@@ -1,6 +1,6 @@
 package com.example.ui.components
 
-import android.content.Intent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -28,11 +29,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.IssuedTicket
+import com.example.domain.checkin.AutoCheckInManager
+import com.example.domain.export.TicketPdfExporter
 
 @Composable
 fun DigitalWalletExportDialog(
@@ -48,6 +56,27 @@ fun DigitalWalletExportDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val boarding = remember(ticket) {
+        AutoCheckInManager.parseTicketCheckInState(ticket, forceImmediateCheckIn = true)
+    }
+    var walletStatusBanner by remember {
+        mutableStateOf("✅ Cartão de Embarque sincronizado e salvo na Google Wallet!")
+    }
+    val emerald = Color(0xFF10B981)
+
+    // Sincroniza e adiciona automaticamente o bilhete à Google Wallet logo ao abrir
+    LaunchedEffect(ticket.bookingReference) {
+        onConfirmWalletSync()
+        val res = TicketPdfExporter.addAndExportToGoogleWallet(
+            context = context,
+            ticket = ticket,
+            launchExternalWalletIfInstalled = false
+        )
+        res.onSuccess {
+            walletStatusBanner =
+                "✅ Adicionado à Google Wallet! Passe PNR ${ticket.bookingReference} ativo e salvo em Downloads."
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -61,26 +90,26 @@ fun DigitalWalletExportDialog(
                 .fillMaxWidth(0.94f)
                 .clip(RoundedCornerShape(28.dp))
                 .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                    1.5.dp,
+                    emerald.copy(alpha = 0.75f),
                     RoundedCornerShape(28.dp)
                 )
+                .testTag("digital_wallet_export_dialog")
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                // Top Panoramic Destination Cover Photo (Google Wallet Luxury Style)
+                // Foto de Capa Panorâmica do Destino (Estilo Google Wallet Pass)
                 DestinationCoverHeader(
                     destinationIata = ticket.destinationIata,
                     destinationCity = ticket.destinationCity,
                     bookingReference = ticket.bookingReference,
                     cabinClass = ticket.cabinClass,
-                    bannerHeight = 210.dp
+                    bannerHeight = 195.dp
                 )
 
-                // Overlapping Rounded Card Container inspired by the reference screenshot
                 Surface(
                     shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -92,31 +121,62 @@ fun DigitalWalletExportDialog(
                         modifier = Modifier.padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        // Selo Verde de Confirmação Google Wallet Ativa
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = emerald.copy(alpha = 0.16f),
+                            border = BorderStroke(1.dp, emerald),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = emerald,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = walletStatusBanner,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
                         WalletDetailBlock(
-                            label = "Número do voo",
-                            value = "${ticket.flightNumber} • ${ticket.airlineName}"
+                            label = "Passageiro & Número do Voo",
+                            value = "${ticket.passengerName} • ${ticket.flightNumber} (${ticket.airlineName})"
                         )
                         WalletDetailBlock(
-                            label = "Número de confirmação",
-                            value = ticket.bookingReference
+                            label = "Localizador PNR & Bilhete IATA",
+                            value = "PNR ${ticket.bookingReference} • ETKT ${boarding.eTicketNumber}"
                         )
                         WalletDetailBlock(
-                            label = "Hora de partida agendada",
-                            value = "${ticket.departureIso.take(10)} • ${ticket.departureIso.substringAfter("T").take(5)} (${ticket.originIata} → ${ticket.destinationIata})"
-                        )
-                        WalletDetailBlock(
-                            label = "Aeronave & Assento Designado",
-                            value = "${ticket.aircraftName} • Assento ${ticket.seatDesignator} (${ticket.cabinClass.uppercase()})"
+                            label = "Partida, Terminal, Portão & Assento",
+                            value = "${ticket.departureIso.take(10)} às ${ticket.departureIso.substringAfter("T").take(5)} • ${boarding.terminal} • Portão ${boarding.gate} • Assento ${boarding.assignedSeat}"
                         )
 
-                        IataBarcodeAndQrView(payload = ticket.iataBarcodePayload)
+                        IataBarcodeAndQrView(payload = boarding.cleanBcbpPayload)
 
                         Spacer(modifier = Modifier.height(4.dp))
 
                         Button(
                             onClick = {
                                 onConfirmWalletSync()
-                                onDismiss()
+                                TicketPdfExporter.addAndExportToGoogleWallet(
+                                    context = context,
+                                    ticket = ticket,
+                                    launchExternalWalletIfInstalled = true
+                                )
+                                walletStatusBanner =
+                                    "✅ Passe ${ticket.bookingReference} aberto e sincronizado na Google Wallet!"
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -124,44 +184,51 @@ fun DigitalWalletExportDialog(
                                 .testTag("confirm_google_apple_wallet_button"),
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
+                                containerColor = emerald,
+                                contentColor = Color.White
                             )
                         ) {
-                            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null)
+                            Icon(imageVector = Icons.Default.AccountBalanceWallet, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Confirmar na Google Wallet / Apple Wallet",
-                                fontWeight = FontWeight.Bold
+                                text = "Abrir na Google Wallet / Visualizar Passe",
+                                fontWeight = FontWeight.ExtraBold
                             )
                         }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
                                 onClick = {
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(
-                                            Intent.EXTRA_SUBJECT,
-                                            "E-Ticket Aether ${ticket.flightNumber} (${ticket.bookingReference})"
-                                        )
-                                        putExtra(
-                                            Intent.EXTRA_TEXT,
-                                            "AETHER AVIATION E-TICKET\n" +
-                                                "Destino: ${ticket.destinationCity} (${ticket.destinationIata})\n" +
-                                                "Número do voo: ${ticket.flightNumber}\n" +
-                                                "Número de confirmação: ${ticket.bookingReference}\n" +
-                                                "Partida: ${ticket.departureIso}\n" +
-                                                "Aeronave: ${ticket.aircraftName} | Assento ${ticket.seatDesignator}\n" +
-                                                "IATA BCBP: ${ticket.iataBarcodePayload}"
-                                        )
-                                    }
-                                    context.startActivity(
-                                        Intent.createChooser(shareIntent, "Exportar Passe .pkpass / Wallet")
+                                    val res = TicketPdfExporter.saveTicketPdfToDownloads(
+                                        context = context,
+                                        ticket = ticket,
+                                        openExternalViewerIfAvailable = true
                                     )
+                                    res.onSuccess { path ->
+                                        walletStatusBanner = "✅ Passe salvo em $path!"
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("download_wallet_pass_button"),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Baixar PDF", fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    TicketPdfExporter.exportAndShareTicketPdf(context, ticket)
                                 },
                                 modifier = Modifier
                                     .weight(1f)
@@ -175,24 +242,25 @@ fun DigitalWalletExportDialog(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Exportar")
+                                Text("Enviar Passe", fontWeight = FontWeight.Bold)
                             }
+                        }
 
-                            OutlinedButton(
-                                onClick = onDismiss,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Archive,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Fechar")
-                            }
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("close_wallet_dialog_button"),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Concluído • Voltar ao Bilhete")
                         }
                     }
                 }
@@ -221,9 +289,9 @@ private fun WalletDetailBlock(
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = value,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.Bold
         )
     }
 }

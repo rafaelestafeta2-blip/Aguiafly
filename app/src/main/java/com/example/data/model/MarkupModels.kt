@@ -143,7 +143,13 @@ data class EnrichedFlightOffer(
     val hasCriticalLayoverAlert: Boolean = false,
     val criticalLayoverAlertSummary: String? = null,
     val carryOnBaggageAllowance: String = "Não Incluída",
-    val checkedBaggageAllowance: String = "Não Incluída"
+    val checkedBaggageAllowance: String = "Não Incluída",
+    val isRoundTrip: Boolean = false,
+    val returnDateIso: String = "",
+    val returnDepartureTimeFormatted: String = "",
+    val returnArrivalTimeFormatted: String = "",
+    val returnFlightNumber: String = "",
+    val returnDurationFormatted: String = ""
 ) {
     /**
      * Número efetivo de escalas: se houver mais de 1 segmento na lista `segmentLegs`,

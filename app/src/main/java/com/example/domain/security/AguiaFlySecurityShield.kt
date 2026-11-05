@@ -167,6 +167,35 @@ object PassportSecurityValidator {
         }
     }
 
+    /**
+     * Normaliza qualquer data (DD/MM/AAAA, DD-MM-AAAA, AAAA/MM/DD) para o formato estrito ISO-8601 YYYY-MM-DD
+     * exigido pela API da Duffel e companhias aéreas (TAP, Iberia, British Airways).
+     */
+    fun normalizeIsoDate(rawDate: String?, fallbackDate: String = "1990-01-01"): String {
+        val clean = rawDate?.trim().orEmpty()
+        if (clean.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$"))) return clean
+        
+        // Formato DD/MM/AAAA ou DD-MM-AAAA ou DD.MM.AAAA
+        val ddmmyyyy = Regex("^(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})$").find(clean)
+        if (ddmmyyyy != null) {
+            val (d, m, y) = ddmmyyyy.destructured
+            return "${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}"
+        }
+        
+        // Formato AAAA/MM/DD ou AAAA.MM.DD
+        val yyyymmdd = Regex("^(\\d{4})[/.-](\\d{1,2})[/.-](\\d{1,2})$").find(clean)
+        if (yyyymmdd != null) {
+            val (y, m, d) = yyyymmdd.destructured
+            return "${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}"
+        }
+        
+        return if (clean.length >= 10 && clean.take(10).matches(Regex("^\\d{4}-\\d{2}-\\d{2}$"))) {
+            clean.take(10)
+        } else {
+            fallbackDate
+        }
+    }
+
     fun maskDocumentNumber(raw: String?): String {
         val clean = raw?.trim()?.uppercase().orEmpty()
         if (clean.isEmpty()) return "NÃO INFORMADO"

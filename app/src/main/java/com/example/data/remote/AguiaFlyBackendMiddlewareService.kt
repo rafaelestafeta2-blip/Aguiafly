@@ -69,7 +69,10 @@ data class BackendPriceChangeDetailsDto(
     @Json(name = "currentNetAmountEur") val currentNetAmountEur: Double? = null,
     @Json(name = "previousGrandTotalEur") val previousGrandTotalEur: Double? = null,
     @Json(name = "currentGrandTotalEur") val currentGrandTotalEur: Double? = null,
-    @Json(name = "currency") val currency: String? = "EUR"
+    @Json(name = "currency") val currency: String? = "EUR",
+    @Json(name = "duffelErrorCode") val duffelErrorCode: String? = null,
+    @Json(name = "field") val field: String? = null,
+    @Json(name = "exactDuffelMessage") val exactDuffelMessage: String? = null
 )
 
 data class BackendAtomicCheckoutResponse(
@@ -78,6 +81,7 @@ data class BackendAtomicCheckoutResponse(
     @Json(name = "errorCode") val errorCode: String? = null,
     @Json(name = "message") val message: String? = null,
     @Json(name = "error") val error: String? = null,
+    @Json(name = "field") val field: String? = null,
     @Json(name = "details") val details: BackendPriceChangeDetailsDto? = null,
     @Json(name = "booking") val booking: BackendTripBookingSummaryDto? = null
 )

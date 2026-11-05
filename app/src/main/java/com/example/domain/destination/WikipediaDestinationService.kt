@@ -17,21 +17,35 @@ object WikipediaDestinationService {
      */
     suspend fun fetchCityCoverAndCountry(cityName: String): Pair<String?, String?> =
         withContext(Dispatchers.IO) {
-            val cleanQuery = cityName.substringBefore("(").trim()
-            if (cleanQuery.length < 2) return@withContext null to null
-            memoryCache[cleanQuery.lowercase()]?.let { return@withContext it }
+            val baseClean = cityName.substringBefore("(").trim()
+            if (baseClean.length < 2) return@withContext null to null
+            memoryCache[baseClean.lowercase()]?.let { return@withContext it }
 
-            val ptResult = queryWikiSummary("https://pt.wikipedia.org/api/rest_v1/page/summary/", cleanQuery)
-            if (ptResult.first != null) {
-                memoryCache[cleanQuery.lowercase()] = ptResult
-                return@withContext ptResult
-            }
+            val candidates = baseClean
+                .split("/", "-")
+                .map { it.trim() }
+                .filter { it.length >= 2 }
+                .distinct()
 
-            val enResult = queryWikiSummary("https://en.wikipedia.org/api/rest_v1/page/summary/", cleanQuery)
-            if (enResult.first != null) {
-                memoryCache[cleanQuery.lowercase()] = enResult
+            for (candidate in candidates) {
+                memoryCache[candidate.lowercase()]?.let { cached ->
+                    if (cached.first != null) return@withContext cached
+                }
+                val ptResult = queryWikiSummary("https://pt.wikipedia.org/api/rest_v1/page/summary/", candidate)
+                if (ptResult.first != null) {
+                    memoryCache[candidate.lowercase()] = ptResult
+                    memoryCache[baseClean.lowercase()] = ptResult
+                    return@withContext ptResult
+                }
+
+                val enResult = queryWikiSummary("https://en.wikipedia.org/api/rest_v1/page/summary/", candidate)
+                if (enResult.first != null) {
+                    memoryCache[candidate.lowercase()] = enResult
+                    memoryCache[baseClean.lowercase()] = enResult
+                    return@withContext enResult
+                }
             }
-            enResult
+            null to null
         }
 
     private fun queryWikiSummary(baseUrl: String, query: String): Pair<String?, String?> {

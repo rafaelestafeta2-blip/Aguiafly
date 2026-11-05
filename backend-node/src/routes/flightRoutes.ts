@@ -151,14 +151,31 @@ flightRouter.post("/checkout/atomic-issue", async (req: Request, res: Response) 
       return res.status(error.httpStatus).json({
         success: false,
         errorCode: error.code,
+        message: error.message,
         error: error.message,
         details: error.details || {},
       });
     }
-    return res.status(500).json({
+    const firstDuffelErr = error?.errors?.[0];
+    if (firstDuffelErr) {
+      const exactMsg = String(firstDuffelErr.message || error.message || "Erro de validação do passageiro na companhia aérea.");
+      const exactCode = String(firstDuffelErr.code || "passenger_validation_error");
+      return res.status(400).json({
+        success: false,
+        errorCode: exactCode,
+        message: exactMsg,
+        error: exactMsg,
+        details: {
+          duffelErrorCode: exactCode,
+          field: firstDuffelErr?.source?.field || firstDuffelErr?.source?.pointer || "passengers",
+        },
+      });
+    }
+    return res.status(400).json({
       success: false,
-      errorCode: "INTERNAL_CHECKOUT_ERROR",
-      error: error.message || "Erro inesperado durante a orquestração atômica do checkout.",
+      errorCode: "INVALID_PASSENGER_DATA",
+      message: error.message || "Erro de validação durante o checkout.",
+      error: error.message || "Erro de validação durante o checkout.",
     });
   }
 });
@@ -317,9 +334,17 @@ flightRouter.post("/orders/issue", async (req: Request, res: Response) => {
         console.error("[Orders Issue Rollback] Failed to cancel Stripe PaymentIntent hold:", cancelErr);
       }
     }
-    res.status(422).json({
-      error: error.message || "Failed to issue Duffel E-Ticket order",
-      errorCode: "DUFFEL_ORDER_CREATION_FAILED",
+    const firstDuffelError = error?.errors?.[0];
+    const exactDuffelCode = String(firstDuffelError?.code || "DUFFEL_ORDER_CREATION_FAILED");
+    const exactDuffelMessage = String(
+      firstDuffelError?.message || error?.message || "Falha ao validar dados do passageiro na companhia aérea."
+    );
+    res.status(400).json({
+      success: false,
+      error: exactDuffelMessage,
+      message: exactDuffelMessage,
+      errorCode: exactDuffelCode,
+      field: firstDuffelError?.source?.field || firstDuffelError?.source?.pointer || "passengers",
       stripeHoldReleased: Boolean(holdCancellationResult),
       stripeHoldCancellation: holdCancellationResult,
     });

@@ -564,6 +564,41 @@ fun FlightOfferCard(
                         }
                     }
 
+                    if (offer.isRoundTrip && offer.returnDateIso.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFEFF6FF),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFBFDBFE), RoundedCornerShape(8.dp))
+                                .testTag("flight_return_leg_${offer.flightNumber}")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "🔄 Volta (${offer.returnDateIso}): ${offer.destinationIata} ➔ ${offer.originIata}",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF1E3A8A),
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${offer.returnDepartureTimeFormatted.ifBlank { "16:40" }}–${offer.returnArrivalTimeFormatted.ifBlank { "20:15" }}",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF005AA3),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
                     if (offer.airportChange || offer.hasCriticalLayoverAlert) {
                         val alertLabel = buildList {
                             if (offer.airportChange) add("⚠️ Troca de aeroporto na conexão")
@@ -624,14 +659,18 @@ fun FlightOfferCard(
                         softWrap = false
                     )
                     Text(
-                        text = "Tarifa NDC",
-                        fontSize = 12.sp,
+                        text = if (offer.isRoundTrip) "Ida + Volta NDC" else "Tarifa NDC",
+                        fontSize = 11.sp,
                         color = edreamsBlue,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "por passageiro\nBase ${MarkupEngine.formatEur(offer.netFareEur)}\n(${airlineIdentity.allianceName})",
+                        text = if (offer.isRoundTrip) {
+                            "Ida e Volta incl.\nBase ${MarkupEngine.formatEur(offer.netFareEur)}\n(${airlineIdentity.allianceName})"
+                        } else {
+                            "por passageiro\nBase ${MarkupEngine.formatEur(offer.netFareEur)}\n(${airlineIdentity.allianceName})"
+                        },
                         fontSize = 10.sp,
                         lineHeight = 12.sp,
                         color = Color(0xFF64748B),

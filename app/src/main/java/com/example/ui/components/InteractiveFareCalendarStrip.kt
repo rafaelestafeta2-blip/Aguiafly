@@ -100,7 +100,7 @@ fun InteractiveFareCalendarSection(
 
     if (showDepartureDatePicker) {
         EdreamsMonthlyPriceCalendarDialog(
-            title = "Quando vai viajar?",
+            title = "Quando vai viajar? (Data de Ida)",
             initialSelectedDateIso = departureDateIso,
             originIata = originIata,
             destinationIata = destinationIata,
@@ -120,12 +120,12 @@ fun InteractiveFareCalendarSection(
 
     if (showReturnDatePicker) {
         EdreamsMonthlyPriceCalendarDialog(
-            title = "Quando vai regressar?",
+            title = "Quando vai regressar? (Data de Volta)",
             initialSelectedDateIso = returnDateIso,
             originIata = destinationIata,
             destinationIata = originIata,
             cabinClass = cabinClass,
-            tripMultiplier = 1.0,
+            tripMultiplier = tripType.multiplier,
             passengerMultiplier = passengers.fareMultiplier,
             markupConfig = markupConfig,
             referenceLowestFareEur = lowestCurrentFareEur,
@@ -133,106 +133,155 @@ fun InteractiveFareCalendarSection(
             onDismiss = { showReturnDatePicker = false },
             onConfirmDate = { picked ->
                 showReturnDatePicker = false
-                onSelectReturnDate(picked)
+                val safePick = runCatching {
+                    val dep = LocalDate.parse(departureDateIso.take(10))
+                    val ret = LocalDate.parse(picked.take(10))
+                    if (ret.isBefore(dep)) dep.plusDays(3).toString() else picked
+                }.getOrDefault(picked)
+                onSelectReturnDate(safePick)
             }
         )
     }
 
-    // Apenas os campos de data limpos na tela principal; o calendário só abre ao clicar!
-    Row(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(14.dp))
-                .border(1.dp, gold.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
-                .clickable { showDepartureDatePicker = true }
-                .testTag("departure_date_input")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.CalendarMonth,
-                        contentDescription = "Selecionar data de partida",
-                        tint = gold,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Data de Ida (Toque para abrir calendário)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
-                        )
-                        Text(
-                            text = departureDateIso,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = emerald.copy(alpha = 0.16f)
-                ) {
-                    Text(
-                        text = selectedCurrency.format(lowestCurrentFareEur),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = emerald,
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
-        }
-
-        if (tripType == TripType.ROUND_TRIP) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
-                    .clickable { showReturnDatePicker = true }
-                    .testTag("return_date_input")
+                    .border(1.dp, gold.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                    .clickable { showDepartureDatePicker = true }
+                    .testTag("departure_date_input")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = "Selecionar data de partida",
+                            tint = gold,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = if (tripType == TripType.ROUND_TRIP) "Data de Ida" else "Data de Ida (Toque para abrir)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = departureDateIso,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    if (tripType == TripType.ONE_WAY) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = emerald.copy(alpha = 0.16f)
+                        ) {
+                            Text(
+                                text = selectedCurrency.format(lowestCurrentFareEur),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = emerald,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (tripType == TripType.ROUND_TRIP) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .border(1.dp, gold.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+                        .clickable { showReturnDatePicker = true }
+                        .testTag("return_date_input")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.EventAvailable,
+                            contentDescription = "Selecionar data de regresso",
+                            tint = gold,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Data de Volta",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = returnDateIso,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (tripType == TripType.ROUND_TRIP) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = emerald.copy(alpha = 0.14f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, emerald.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.EventAvailable,
-                        contentDescription = "Selecionar data de regresso",
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(18.dp)
+                    Text(
+                        text = "🔄 Ida ($departureDateIso) + Volta ($returnDateIso) incluídas",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = "Data de Volta",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
-                        )
-                        Text(
-                            text = returnDateIso,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                    Text(
+                        text = "Desde ${selectedCurrency.format(lowestCurrentFareEur)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = emerald,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             }
         }

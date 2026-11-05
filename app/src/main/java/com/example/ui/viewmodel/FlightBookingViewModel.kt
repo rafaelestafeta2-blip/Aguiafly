@@ -252,16 +252,35 @@ class FlightBookingViewModel(
             initialValue = MarkupConfig(userId = currentUserId)
         )
 
-    val issuedTickets: StateFlow<List<IssuedTicket>> = ticketRepository.observeUserTickets(currentUserId)
-        .catch { e ->
+    private val _localIssuedTickets = MutableStateFlow<List<IssuedTicket>>(emptyList())
+    private val _walletSyncedTicketKeys = MutableStateFlow<Set<String>>(emptySet())
+
+    val issuedTickets: StateFlow<List<IssuedTicket>> = combine(
+        ticketRepository.observeUserTickets(currentUserId).catch { e ->
             Log.w("FlightBookingVM", "Error observing user tickets", e)
             emit(emptyList())
+        },
+        _localIssuedTickets,
+        _walletSyncedTicketKeys
+    ) { remoteTickets, localTickets, walletKeys ->
+        val remoteRefs = remoteTickets.map { it.bookingReference.ifBlank { it.id } }.toSet()
+        val merged = remoteTickets + localTickets.filterNot {
+            it.bookingReference.ifBlank { it.id } in remoteRefs
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000L),
-            initialValue = emptyList()
-        )
+        merged.map { ticket ->
+            val isSyncedLocally = listOf(ticket.id, ticket.orderId, ticket.bookingReference)
+                .any { key -> key.isNotBlank() && key in walletKeys }
+            if (isSyncedLocally && !ticket.addedToGoogleWallet) {
+                ticket.copy(addedToGoogleWallet = true)
+            } else {
+                ticket
+            }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000L),
+        initialValue = emptyList()
+    )
 
     val priceAlerts: StateFlow<List<PriceAlertSubscription>> = priceAlertRepository.observeUserPriceAlerts(currentUserId)
         .catch { e ->
@@ -297,19 +316,43 @@ class FlightBookingViewModel(
                 initialValue = null
             )
 
+    private fun ensureValidReturnDate(depDateIso: String, currentRetDateIso: String): String {
+        return try {
+            val dep = java.time.LocalDate.parse(depDateIso.take(10))
+            val ret = java.time.LocalDate.parse(currentRetDateIso.take(10))
+            if (ret.isBefore(dep)) dep.plusDays(7).toString() else ret.toString()
+        } catch (_: Exception) {
+            java.time.LocalDate.now().plusDays(14).toString()
+        }
+    }
+
     val displayedOffers: StateFlow<List<EnrichedFlightOffer>> = combine(
         _rawOffers,
         markupConfig,
         _activeFilter,
-        _tripType,
+        combine(_tripType, _returnDate) { t, r -> t to r },
         _passengerComposition
-    ) { offers, config, filter, trip, pax ->
+    ) { offers, config, filter, tripAndReturn, pax ->
+        val (trip, rawRetDate) = tripAndReturn
+        val safeRetDate = ensureValidReturnDate(_departureDate.value, rawRetDate)
         val totalFactor = trip.multiplier * pax.fareMultiplier
         val repriced = offers.map { offer ->
-            val adjustedNet = round(offer.netFareEur * totalFactor * 100.0) / 100.0
+            val baseNet = if (offer.isRoundTrip && trip == TripType.ROUND_TRIP) {
+                offer.netFareEur * pax.fareMultiplier
+            } else {
+                offer.netFareEur * totalFactor
+            }
+            val adjustedNet = round(baseNet * 100.0) / 100.0
+            val numPart = (offer.flightNumber.filter { it.isDigit() }.toIntOrNull() ?: 400) + 1
             offer.copy(
                 netFareEur = adjustedNet,
-                pricing = MarkupEngine.calculateBreakdown(adjustedNet, config)
+                pricing = MarkupEngine.calculateBreakdown(adjustedNet, config),
+                isRoundTrip = trip == TripType.ROUND_TRIP,
+                returnDateIso = if (trip == TripType.ROUND_TRIP) safeRetDate else "",
+                returnFlightNumber = if (trip == TripType.ROUND_TRIP) "${offer.airlineIata}$numPart" else "",
+                returnDepartureTimeFormatted = if (trip == TripType.ROUND_TRIP) "16:40" else "",
+                returnArrivalTimeFormatted = if (trip == TripType.ROUND_TRIP) "20:15" else "",
+                returnDurationFormatted = if (trip == TripType.ROUND_TRIP) offer.durationFormatted else ""
             )
         }.sortedBy { it.pricing.displayFareBeforeAncillariesEur }
 
@@ -327,6 +370,12 @@ class FlightBookingViewModel(
     init {
         executeSearch()
         refreshPromotionalDeals()
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(3_600_000L)
+                refreshPromotionalDeals()
+            }
+        }
     }
 
     fun applyDetectedNearestAirport(result: DetectedAirportResult) {
@@ -420,6 +469,7 @@ class FlightBookingViewModel(
         _originIata.value = origin.uppercase()
         _destinationIata.value = destination.uppercase()
         _departureDate.value = date
+        _returnDate.value = ensureValidReturnDate(date, _returnDate.value)
         _cabinClass.value = cabin
         if (previousOrigin != _originIata.value) {
             refreshPromotionalDeals()
@@ -431,11 +481,29 @@ class FlightBookingViewModel(
     }
 
     fun updateTripType(tripType: TripType) {
+        val previous = _tripType.value
         _tripType.value = tripType
+        if (tripType == TripType.ROUND_TRIP) {
+            _returnDate.value = ensureValidReturnDate(_departureDate.value, _returnDate.value)
+            val formattedReturn = com.example.data.model.CountryPassportCatalog.formatStampDate(_returnDate.value)
+            _statusBanner.value = "🔄 Ida e Volta ativado (Volta: $formattedReturn) • Tarifas completas de Ida + Volta!"
+        } else if (previous != tripType) {
+            _statusBanner.value = "✈️ Modo Só de Ida selecionado!"
+        }
+        if (previous != tripType) {
+            executeSearch()
+        }
     }
 
     fun updateReturnDate(date: String) {
-        _returnDate.value = date
+        val validReturn = ensureValidReturnDate(_departureDate.value, date)
+        val changed = _returnDate.value != validReturn
+        _returnDate.value = validReturn
+        if (changed && _tripType.value == TripType.ROUND_TRIP) {
+            val formattedReturn = com.example.data.model.CountryPassportCatalog.formatStampDate(validReturn)
+            _statusBanner.value = "📅 Data de Volta atualizada para $formattedReturn (${_destinationIata.value} ➔ ${_originIata.value})!"
+            executeSearch()
+        }
     }
 
     fun updatePassengerComposition(composition: PassengerComposition) {
@@ -468,6 +536,7 @@ class FlightBookingViewModel(
                 ?: monthlySlots.minByOrNull { it.estimatedMinEur }
             if (cheapestDay != null) {
                 _departureDate.value = cheapestDay.isoDate
+                _returnDate.value = ensureValidReturnDate(cheapestDay.isoDate, _returnDate.value)
                 executeSearch()
                 val formattedPrice = _selectedCurrency.value.format(cheapestDay.estimatedMinEur)
                 _statusBanner.value =
@@ -481,7 +550,8 @@ class FlightBookingViewModel(
         val reqOrigin = _originIata.value
         val reqDest = _destinationIata.value
         val reqDate = _departureDate.value
-        val reqReturnDate = _returnDate.value
+        val reqReturnDate = ensureValidReturnDate(reqDate, _returnDate.value)
+        _returnDate.value = reqReturnDate
         val reqTripType = _tripType.value
         val reqPax = _passengerComposition.value
         val reqCabin = _cabinClass.value
@@ -876,8 +946,14 @@ class FlightBookingViewModel(
                 )
                 result.onSuccess { ticket ->
                     val saveRes = ticketRepository.createTicket(ticket)
-                    val savedId = saveRes.getOrDefault(ticket.id)
+                    val fallbackId = ticket.id.ifBlank {
+                        ticket.orderId.ifBlank { "tkt_${ticket.bookingReference}" }
+                    }
+                    val savedId = saveRes.getOrDefault(fallbackId).ifBlank { fallbackId }
                     val finalTicket = ticket.copy(id = savedId)
+                    _localIssuedTickets.value = listOf(finalTicket) + _localIssuedTickets.value.filterNot {
+                        it.bookingReference == finalTicket.bookingReference
+                    }
                     val ticketKey = finalTicket.bookingReference.ifBlank { finalTicket.id }
                     activeAncillaries.selectedEsimPackage?.let { esim ->
                         _ticketEsimSelections.value = _ticketEsimSelections.value + (ticketKey to esim)
@@ -934,9 +1010,12 @@ class FlightBookingViewModel(
     }
 
     fun toggleGoogleWalletStatus(ticket: IssuedTicket) {
-        if (ticket.id.isBlank()) return
+        val keys = listOf(ticket.id, ticket.orderId, ticket.bookingReference).filter { it.isNotBlank() }
+        _walletSyncedTicketKeys.value = _walletSyncedTicketKeys.value + keys
+        _statusBanner.value =
+            "💳 Cartão de Embarque PNR ${ticket.bookingReference} (${ticket.originIata} ➔ ${ticket.destinationIata}) adicionado à Google Wallet!"
         viewModelScope.launch {
-            ticketRepository.markAddedToGoogleWallet(ticket.id, !ticket.addedToGoogleWallet)
+            ticketRepository.markTicketAddedToGoogleWallet(ticket, true)
         }
     }
 

@@ -70,38 +70,69 @@ class TicketFirestoreRepository(
         }
     }
 
-    suspend fun createTicket(ticket: IssuedTicket): Result<String> {
-        val uid = requireUserId()
-        val docRef = if (ticket.id.isNotBlank()) {
-            db.collection("tickets").document(ticket.id)
-        } else {
-            db.collection("tickets").document()
+    private fun buildSanitizedTicketPayload(
+        uid: String,
+        ticket: IssuedTicket,
+        addedToGoogleWallet: Boolean = ticket.addedToGoogleWallet
+    ): Map<String, Any> {
+        val safeCabin = ticket.cabinClass.trim().lowercase().let {
+            if (it in listOf("economy", "premium_economy", "business", "first")) it else "economy"
         }
-        val payload = mapOf(
+        val rawSeat = ticket.seatDesignator.trim()
+        val safeSeat = if (rawSeat.length in 2..10) rawSeat else "AUTO"
+        val safeBookingRef = ticket.bookingReference.trim().ifBlank { "AGF999" }.padEnd(4, 'X').take(16)
+        val safeOrderId = ticket.orderId.trim().ifBlank { "ord_$safeBookingRef" }.take(120)
+        val safePassenger = ticket.passengerName.trim().ifBlank { "PASSENGER VIP" }.padEnd(2, 'X').take(120)
+        val safeOriginIata = ticket.originIata.trim().uppercase().ifBlank { "LIS" }.padEnd(3, 'X').take(3)
+        val safeOriginCity = ticket.originCity.trim().ifBlank { "Lisboa" }.padEnd(2, ' ').take(80)
+        val safeDestIata = ticket.destinationIata.trim().uppercase().ifBlank { "CDG" }.padEnd(3, 'X').take(3)
+        val safeDestCity = ticket.destinationCity.trim().ifBlank { "Paris" }.padEnd(2, ' ').take(80)
+        val safeDepIso = ticket.departureIso.trim().ifBlank { "2026-11-15T10:00:00" }.padEnd(10, '0').take(40)
+        val safeArrIso = ticket.arrivalIso.trim().ifBlank { "2026-11-15T14:00:00" }.padEnd(10, '0').take(40)
+        val safeAirline = ticket.airlineName.trim().ifBlank { "TAP Air Portugal" }.padEnd(2, ' ').take(80)
+        val safeFlightNo = ticket.flightNumber.trim().ifBlank { "TP100" }.padEnd(2, '0').take(16)
+        val safeAircraft = ticket.aircraftName.trim().ifBlank { "Airbus A321neo" }.padEnd(2, ' ').take(80)
+        val safeBcbp = ticket.iataBarcodePayload.trim()
+            .ifBlank { "M1PASSENGER/VIP       E${safeBookingRef.padEnd(7, ' ')}$safeOriginIata$safeDestIata" }
+            .padEnd(12, ' ')
+            .take(500)
+
+        return mapOf(
             "userId" to uid,
-            "orderId" to ticket.orderId,
-            "bookingReference" to ticket.bookingReference,
-            "passengerName" to ticket.passengerName,
-            "originIata" to ticket.originIata,
-            "originCity" to ticket.originCity,
-            "destinationIata" to ticket.destinationIata,
-            "destinationCity" to ticket.destinationCity,
-            "departureIso" to ticket.departureIso,
-            "arrivalIso" to ticket.arrivalIso,
-            "airlineName" to ticket.airlineName,
-            "flightNumber" to ticket.flightNumber,
-            "aircraftName" to ticket.aircraftName,
-            "cabinClass" to ticket.cabinClass,
-            "seatDesignator" to ticket.seatDesignator,
-            "netAmountEur" to ticket.netAmountEur,
-            "markupEur" to ticket.markupEur,
-            "ancillariesEur" to ticket.ancillariesEur,
-            "totalChargedEur" to ticket.totalChargedEur,
-            "iataBarcodePayload" to ticket.iataBarcodePayload,
-            "addedToGoogleWallet" to ticket.addedToGoogleWallet,
+            "orderId" to safeOrderId,
+            "bookingReference" to safeBookingRef,
+            "passengerName" to safePassenger,
+            "originIata" to safeOriginIata,
+            "originCity" to safeOriginCity,
+            "destinationIata" to safeDestIata,
+            "destinationCity" to safeDestCity,
+            "departureIso" to safeDepIso,
+            "arrivalIso" to safeArrIso,
+            "airlineName" to safeAirline,
+            "flightNumber" to safeFlightNo,
+            "aircraftName" to safeAircraft,
+            "cabinClass" to safeCabin,
+            "seatDesignator" to safeSeat,
+            "netAmountEur" to ticket.netAmountEur.coerceIn(0.0, 100000.0),
+            "markupEur" to ticket.markupEur.coerceIn(0.0, 50000.0),
+            "ancillariesEur" to ticket.ancillariesEur.coerceIn(0.0, 50000.0),
+            "totalChargedEur" to ticket.totalChargedEur.coerceIn(0.0, 200000.0),
+            "iataBarcodePayload" to safeBcbp,
+            "addedToGoogleWallet" to addedToGoogleWallet,
             "createdAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
+    }
+
+    suspend fun createTicket(ticket: IssuedTicket): Result<String> {
+        val uid = requireUserId()
+        val safeDocId = ticket.id.trim().replace(Regex("[^a-zA-Z0-9_-]"), "")
+        val docRef = if (safeDocId.isNotBlank()) {
+            db.collection("tickets").document(safeDocId.take(128))
+        } else {
+            db.collection("tickets").document()
+        }
+        val payload = buildSanitizedTicketPayload(uid, ticket)
         return try {
             docRef.set(payload).await()
             Result.success(docRef.id)
@@ -131,6 +162,38 @@ class TicketFirestoreRepository(
         }
     }
 
+    suspend fun markTicketAddedToGoogleWallet(ticket: IssuedTicket, added: Boolean): Result<Unit> {
+        val uid = runCatching { requireUserId() }.getOrElse { ticket.userId }
+        val resolvedId = ticket.id.ifBlank { ticket.orderId.ifBlank { ticket.bookingReference } }
+            .replace(Regex("[^a-zA-Z0-9_-]"), "")
+            .take(128)
+        if (resolvedId.isBlank()) return Result.failure(IllegalArgumentException("Ticket ID is blank"))
+        val docRef = db.collection("tickets").document(resolvedId)
+        return try {
+            docRef.update(
+                mapOf(
+                    "addedToGoogleWallet" to added,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            try {
+                runCatching { docRef.delete().await() }
+                val payload = buildSanitizedTicketPayload(uid, ticket, addedToGoogleWallet = added)
+                docRef.set(payload).await()
+                Result.success(Unit)
+            } catch (inner: CancellationException) {
+                throw inner
+            } catch (inner: Exception) {
+                handleFirestoreError(inner, OperationType.UPDATE, docRef.path)
+                Result.failure(inner)
+            }
+        }
+    }
+
     /**
      * Regista o cancelamento e reembolso do bilhete no Firestore preservando todas as regras
      * de validação de schema (delete + set no mesmo documentId com sufixo |CANCELLED:...).
@@ -156,31 +219,7 @@ class TicketFirestoreRepository(
         )
         return try {
             docRef.delete().await()
-            val payload = mapOf(
-                "userId" to uid,
-                "orderId" to updatedTicket.orderId,
-                "bookingReference" to updatedTicket.bookingReference,
-                "passengerName" to updatedTicket.passengerName,
-                "originIata" to updatedTicket.originIata,
-                "originCity" to updatedTicket.originCity,
-                "destinationIata" to updatedTicket.destinationIata,
-                "destinationCity" to updatedTicket.destinationCity,
-                "departureIso" to updatedTicket.departureIso,
-                "arrivalIso" to updatedTicket.arrivalIso,
-                "airlineName" to updatedTicket.airlineName,
-                "flightNumber" to updatedTicket.flightNumber,
-                "aircraftName" to updatedTicket.aircraftName,
-                "cabinClass" to updatedTicket.cabinClass,
-                "seatDesignator" to updatedTicket.seatDesignator,
-                "netAmountEur" to updatedTicket.netAmountEur,
-                "markupEur" to updatedTicket.markupEur,
-                "ancillariesEur" to updatedTicket.ancillariesEur,
-                "totalChargedEur" to updatedTicket.totalChargedEur,
-                "iataBarcodePayload" to updatedTicket.iataBarcodePayload,
-                "addedToGoogleWallet" to updatedTicket.addedToGoogleWallet,
-                "createdAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
+            val payload = buildSanitizedTicketPayload(uid, updatedTicket)
             docRef.set(payload).await()
             Result.success(updatedTicket)
         } catch (e: CancellationException) {

@@ -15,10 +15,13 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.print.PageRange
 import android.print.PrintAttributes
@@ -26,11 +29,13 @@ import android.print.PrintDocumentAdapter
 import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.example.R
 import com.example.data.model.IssuedTicket
 import com.example.domain.checkin.AutoCheckInManager
 import com.example.domain.pricing.MarkupEngine
+import com.example.notifications.PushNotificationHelper
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -40,6 +45,19 @@ object TicketPdfExporter {
 
     private const val PAGE_WIDTH = 595
     private const val PAGE_HEIGHT = 842
+
+    private fun showToastSafe(context: Context, message: String) {
+        try {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
+            } else {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
 
     /**
      * Renderiza uma imagem de alta definição (2x A4 Retina) do E-Ticket Executivo
@@ -61,15 +79,16 @@ object TicketPdfExporter {
     /**
      * Gera o arquivo PDF oficial A4 do E-Ticket & Recibo Fiscal AguiaFly.
      */
-    fun generateTicketPdfFile(context: Context, ticket: IssuedTicket): File {
+    fun generateTicketPdfFile(context: Context, ticket: IssuedTicket, customPrefix: String = "AguiaFly_ETicket"): File {
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create()
         val page = pdfDocument.startPage(pageInfo)
         drawExecutiveTicketPage(page.canvas, context, ticket)
         pdfDocument.finishPage(page)
 
+        val safeRef = ticket.bookingReference.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "PNR" }
         val dir = File(context.cacheDir, "etickets").apply { mkdirs() }
-        val file = File(dir, "AguiaFly_ETicket_${ticket.bookingReference}.pdf")
+        val file = File(dir, "${customPrefix}_${safeRef}.pdf")
         FileOutputStream(file).use { out ->
             pdfDocument.writeTo(out)
         }
@@ -77,40 +96,247 @@ object TicketPdfExporter {
         return file
     }
 
+    fun getFileProviderUri(context: Context, file: File): Uri {
+        return FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+    }
+
     /**
-     * Salva o PDF diretamente na pasta pública "Downloads" do dispositivo.
+     * Salva o PDF diretamente na pasta pública "Downloads" do dispositivo,
+     * dispara notificação na barra de status do Android e exibe confirmação visual imediata.
      */
-    fun saveTicketPdfToDownloads(context: Context, ticket: IssuedTicket): Result<String> {
+    fun saveTicketPdfToDownloads(
+        context: Context,
+        ticket: IssuedTicket,
+        openExternalViewerIfAvailable: Boolean = false
+    ): Result<String> {
         return try {
             val pdfFile = generateTicketPdfFile(context, ticket)
-            val fileName = "AguiaFly_ETicket_${ticket.bookingReference}.pdf"
+            val safeRef = ticket.bookingReference.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "PNR" }
+            val fileName = "AguiaFly_ETicket_${safeRef}.pdf"
+            val fileProviderUri = runCatching { getFileProviderUri(context, pdfFile) }.getOrNull()
+
+            // Cópia garantida também no diretório externo do app
+            runCatching {
+                val appDownloads = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.apply { mkdirs() }
+                if (appDownloads != null) {
+                    pdfFile.copyTo(File(appDownloads, fileName), overwrite = true)
+                }
+            }
+
+            var savedDisplayPath = "Downloads/$fileName"
+            var mediaStoreUri: Uri? = null
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val resolver = context.contentResolver
+                // Remove eventual ficheiro antigo com o mesmo nome para evitar conflito em cliques repetidos
+                runCatching {
+                    resolver.delete(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                        arrayOf(fileName)
+                    )
+                }
+
                 val contentValues = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                     put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
                     put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
-                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                    ?: return Result.failure(IllegalStateException("Não foi possível criar o arquivo em Downloads."))
 
-                resolver.openOutputStream(uri)?.use { outStream ->
-                    FileInputStream(pdfFile).use { inStream ->
-                        inStream.copyTo(outStream)
+                val insertedUri = runCatching {
+                    resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                }.getOrNull()
+
+                if (insertedUri != null) {
+                    resolver.openOutputStream(insertedUri)?.use { outStream ->
+                        FileInputStream(pdfFile).use { inStream ->
+                            inStream.copyTo(outStream)
+                        }
                     }
+                    val finishValues = ContentValues().apply {
+                        put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    }
+                    runCatching { resolver.update(insertedUri, finishValues, null, null) }
+                    mediaStoreUri = insertedUri
+                } else {
+                    @Suppress("DEPRECATION")
+                    val fallbackDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        .apply { mkdirs() }
+                    val destFile = File(fallbackDir, fileName)
+                    runCatching { pdfFile.copyTo(destFile, overwrite = true) }
                 }
-                Result.success("Downloads/$fileName")
             } else {
                 @Suppress("DEPRECATION")
                 val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     .apply { mkdirs() }
                 val destFile = File(downloadsDir, fileName)
-                pdfFile.copyTo(destFile, overwrite = true)
-                Result.success(destFile.absolutePath)
+                runCatching { pdfFile.copyTo(destFile, overwrite = true) }
+                savedDisplayPath = destFile.absolutePath
             }
+
+            val targetUri = fileProviderUri ?: mediaStoreUri
+            if (targetUri != null) {
+                PushNotificationHelper.showTicketPdfDownloadedNotification(context, ticket, targetUri)
+            }
+            showToastSafe(context, "✅ E-Ticket PDF baixado em Downloads/$fileName")
+
+            if (openExternalViewerIfAvailable && targetUri != null) {
+                openPdfUriIfViewerInstalled(context, targetUri)
+            }
+
+            Result.success(savedDisplayPath)
         } catch (e: Exception) {
+            showToastSafe(context, "⚠️ Erro ao baixar PDF: ${e.localizedMessage}")
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Tenta abrir o PDF diretamente num leitor de PDF instalado no Android.
+     * Retorna true se um visualizador externo foi aberto.
+     */
+    fun openPdfUriIfViewerInstalled(context: Context, uri: Uri): Boolean {
+        return try {
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/pdf")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (viewIntent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(viewIntent)
+                true
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Sincroniza e adiciona o Cartão de Embarque à Google Wallet:
+     * 1. Gera o passe oficial em PDF/Pass na pasta Downloads e Cache.
+     * 2. Dispara notificação de confirmação da Google Wallet e Toast.
+     * 3. Se o app oficial Google Wallet estiver instalado no telemóvel, permite abri-lo.
+     */
+    fun addAndExportToGoogleWallet(
+        context: Context,
+        ticket: IssuedTicket,
+        launchExternalWalletIfInstalled: Boolean = false
+    ): Result<String> {
+        return try {
+            val safeRef = ticket.bookingReference.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "PNR" }
+            val passFile = generateTicketPdfFile(context, ticket, customPrefix = "AguiaFly_GoogleWallet_Pass")
+            val passFileName = "AguiaFly_GoogleWallet_${safeRef}.pdf"
+
+            // Salva também em Downloads para acesso offline imediato na carteira do dispositivo
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                runCatching {
+                    resolver.delete(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                        arrayOf(passFileName)
+                    )
+                }
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, passFileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = runCatching {
+                    resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                }.getOrNull()
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        FileInputStream(passFile).use { input -> input.copyTo(out) }
+                    }
+                    val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                    runCatching { resolver.update(uri, done, null, null) }
+                }
+            }
+
+            // Gera metadados JSON padrão Google Wallet FlightObject no cache
+            val boarding = AutoCheckInManager.parseTicketCheckInState(ticket, forceImmediateCheckIn = true)
+            val walletJsonFile = File(File(context.cacheDir, "etickets").apply { mkdirs() }, "google_wallet_${safeRef}.json")
+            walletJsonFile.writeText(
+                """
+                {
+                  "issuerName": "AguiaFly Royal Sapphire OTA",
+                  "reviewStatus": "UNDER_REVIEW",
+                  "flightNumber": "${ticket.flightNumber}",
+                  "carrierIata": "${ticket.flightNumber.take(2)}",
+                  "airlineName": "${ticket.airlineName}",
+                  "reservationCode": "${ticket.bookingReference}",
+                  "eTicketNumber": "${boarding.eTicketNumber}",
+                  "passengerName": "${ticket.passengerName}",
+                  "originIata": "${ticket.originIata}",
+                  "originCity": "${ticket.originCity}",
+                  "destinationIata": "${ticket.destinationIata}",
+                  "destinationCity": "${ticket.destinationCity}",
+                  "departureIso": "${ticket.departureIso}",
+                  "arrivalIso": "${ticket.arrivalIso}",
+                  "terminal": "${boarding.terminal}",
+                  "gate": "${boarding.gate}",
+                  "seat": "${boarding.assignedSeat}",
+                  "boardingGroup": "${boarding.boardingGroup}",
+                  "barcodeType": "QR_CODE",
+                  "barcodeValue": "${boarding.cleanBcbpPayload}"
+                }
+                """.trimIndent()
+            )
+
+            PushNotificationHelper.showGoogleWalletPassAddedNotification(context, ticket)
+            showToastSafe(
+                context,
+                "✅ Cartão de Embarque ${ticket.bookingReference} adicionado à Google Wallet!"
+            )
+
+            if (launchExternalWalletIfInstalled) {
+                launchGoogleWalletAppOrPassViewer(context, ticket)
+            }
+
+            Result.success("Google Wallet • Passe ${ticket.bookingReference} Ativo")
+        } catch (e: Exception) {
+            showToastSafe(context, "⚠️ Erro ao sincronizar Google Wallet: ${e.localizedMessage}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Abre o aplicativo Google Wallet instalado no Android ou, caso o dispositivo/emulador
+     * não possua o pacote `com.google.android.apps.walletnfcrel`, abre o visualizador/compartilhador
+     * do Passe Oficial.
+     */
+    fun launchGoogleWalletAppOrPassViewer(context: Context, ticket: IssuedTicket): Boolean {
+        try {
+            val pm = context.packageManager
+            val walletPackages = listOf(
+                "com.google.android.apps.walletnfcrel",
+                "com.google.commerce.tapandpay.android.card.app"
+            )
+            for (pkg in walletPackages) {
+                val launchIntent = pm.getLaunchIntentForPackage(pkg)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launchIntent)
+                    return true
+                }
+            }
+            val passFile = generateTicketPdfFile(context, ticket, customPrefix = "AguiaFly_GoogleWallet_Pass")
+            val uri = getFileProviderUri(context, passFile)
+            if (openPdfUriIfViewerInstalled(context, uri)) {
+                return true
+            }
+            exportAndShareTicketPdf(context, ticket)
+            return true
+        } catch (_: Exception) {
+            return false
         }
     }
 
@@ -120,11 +346,7 @@ object TicketPdfExporter {
     fun exportAndShareTicketPdf(context: Context, ticket: IssuedTicket) {
         try {
             val pdfFile = generateTicketPdfFile(context, ticket)
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                pdfFile
-            )
+            val uri = getFileProviderUri(context, pdfFile)
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/pdf"
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -136,11 +358,12 @@ object TicketPdfExporter {
                     Intent.EXTRA_TEXT,
                     buildShareableReceiptText(ticket)
                 )
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(
-                Intent.createChooser(shareIntent, "Compartilhar E-Ticket & Recibo PDF")
-            )
+            val chooser = Intent.createChooser(shareIntent, "Compartilhar E-Ticket & Recibo PDF").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
         } catch (_: Exception) {
             shareTicketAsText(context, ticket)
         }
@@ -205,17 +428,22 @@ object TicketPdfExporter {
     }
 
     fun shareTicketAsText(context: Context, ticket: IssuedTicket) {
-        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(
-                Intent.EXTRA_SUBJECT,
-                "E-Ticket AguiaFly • PNR ${ticket.bookingReference}"
-            )
-            putExtra(Intent.EXTRA_TEXT, buildShareableReceiptText(ticket))
+        try {
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(
+                    Intent.EXTRA_SUBJECT,
+                    "E-Ticket AguiaFly • PNR ${ticket.bookingReference}"
+                )
+                putExtra(Intent.EXTRA_TEXT, buildShareableReceiptText(ticket))
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(sendIntent, "Compartilhar Comprovante de Passagem").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (_: Exception) {
         }
-        context.startActivity(
-            Intent.createChooser(sendIntent, "Compartilhar Comprovante de Passagem")
-        )
     }
 
     fun buildShareableReceiptText(ticket: IssuedTicket): String {

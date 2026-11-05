@@ -671,10 +671,39 @@ export async function executeAtomicFlightCheckout(
       );
     }
 
+    const isPassengerOrValidationError =
+      exactDuffelCode.includes("passenger") ||
+      exactDuffelCode.includes("identity_document") ||
+      exactDuffelCode.includes("validation_error") ||
+      exactDuffelCode.includes("invalid_") ||
+      String(firstDuffelError?.type || "").includes("validation_error") ||
+      duffelErr?.meta?.status === 400 ||
+      duffelErr?.meta?.status === 422;
+
+    if (isPassengerOrValidationError) {
+      const fieldSource =
+        firstDuffelError?.source?.field ||
+        firstDuffelError?.source?.pointer ||
+        "passengers";
+      throw new CheckoutFlowError(
+        "INVALID_PASSENGER_DATA",
+        exactDuffelMessage,
+        400,
+        {
+          bookingId,
+          paymentIntentId,
+          stripeHoldReleased,
+          duffelErrorCode: exactDuffelCode,
+          field: fieldSource,
+          exactDuffelMessage,
+        }
+      );
+    }
+
     throw new CheckoutFlowError(
       "DUFFEL_ORDER_CREATION_FAILED",
       `Emissão recusada pela companhia aérea: ${exactDuffelMessage}. A pré-autorização no seu cartão foi cancelada imediatamente e o seu limite já está livre.`,
-      422,
+      400,
       {
         bookingId,
         paymentIntentId,

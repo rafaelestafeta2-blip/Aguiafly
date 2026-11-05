@@ -1,9 +1,11 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AirlineSeatFlat
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -28,12 +32,14 @@ import androidx.compose.material.icons.filled.ConfirmationNumber
 import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FlightTakeoff
 import androidx.compose.material.icons.filled.Luggage
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -43,19 +49,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.BoardingPassCardData
 import com.example.data.model.IssuedTicket
 import com.example.data.model.OrderCancellationConfirmation
 import com.example.data.model.OrderCancellationQuote
+import com.example.data.model.PlaceAutocompleteCatalog
 import com.example.domain.export.TicketPdfExporter
 import com.example.domain.pricing.MarkupEngine
 import com.example.ui.components.CancelledTicketRefundReceiptBanner
@@ -87,14 +98,24 @@ fun TicketsWalletScreen(
 ) {
     var walletDialogTicket by remember { mutableStateOf<IssuedTicket?>(null) }
     var pdfPreviewTicket by remember { mutableStateOf<IssuedTicket?>(null) }
+    var selectedTicketKey by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val selectedFullTicket = remember(tickets, selectedTicketKey) {
+        if (selectedTicketKey == null) null
+        else tickets.firstOrNull { it.id.ifBlank { it.orderId } == selectedTicketKey }
+    }
+
+    if (selectedFullTicket != null) {
+        BackHandler {
+            selectedTicketKey = null
+        }
+    }
 
     walletDialogTicket?.let { activeTicket ->
         DigitalWalletExportDialog(
             ticket = activeTicket,
             onConfirmWalletSync = {
-                if (activeTicket.id.isNotBlank() && !activeTicket.addedToGoogleWallet) {
-                    onToggleGoogleWallet(activeTicket)
-                }
+                onToggleGoogleWallet(activeTicket)
             },
             onDismiss = { walletDialogTicket = null }
         )
@@ -123,80 +144,405 @@ fun TicketsWalletScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item {
-            Column {
-                Text(
-                    text = "Minhas Viagens & Carteira Digital",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Bilhetes IATA NDC, Radar em Tempo Real (FlightAware), eSIM Global (Airalo), Salas VIP (Priority Pass) e Experiências no Destino",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        if (tickets.isEmpty()) {
+        if (selectedFullTicket != null) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("empty_tickets_wallet_state")
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { selectedTicketKey = null }
+                        .testTag("back_to_tickets_list_button")
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.ConfirmationNumber,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Text(
-                            text = "Nenhum Bilhete Emitido Ainda",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            text = "Sua carteira exibe exclusivamente passagens aéreas reais emitidas após confirmação de pagamento Stripe e reserva IATA NDC. Escolha um voo na aba Voos NDC para emitir seu primeiro E-Ticket.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Voltar para lista de bilhetes",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text(
+                                    text = "Voltar para Minhas Viagens (${tickets.size})",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Visualizando Bilhete Completo • PNR ${selectedFullTicket.bookingReference}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        ) {
+                            Text(
+                                text = "${selectedFullTicket.originIata} ➔ ${selectedFullTicket.destinationIata}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
                     }
                 }
             }
-        } else {
-            items(tickets, key = { it.id.ifBlank { it.orderId } }) { ticket ->
-                val ticketKey = ticket.id.ifBlank { ticket.orderId }
-                val bookingRefKey = ticket.bookingReference.ifBlank { ticketKey }
+
+            item(key = "full_${selectedFullTicket.id.ifBlank { selectedFullTicket.orderId }}") {
+                val ticketKey = selectedFullTicket.id.ifBlank { selectedFullTicket.orderId }
+                val bookingRefKey = selectedFullTicket.bookingReference.ifBlank { ticketKey }
                 BoardingPassCard(
-                    ticket = ticket,
+                    ticket = selectedFullTicket,
                     cancellationConfirmation = confirmedCancellations[ticketKey],
                     selectedEsim = ticketEsimSelections[bookingRefKey],
                     selectedLounges = ticketLoungeSelections[bookingRefKey].orEmpty(),
                     selectedExperiences = ticketExperienceSelections[bookingRefKey].orEmpty(),
-                    onSelectEsim = { pkg -> onSelectTicketEsim(ticket, pkg) },
-                    onToggleLounge = { lounge -> onToggleTicketLounge(ticket, lounge) },
-                    onToggleExperience = { exp -> onToggleTicketExperience(ticket, exp) },
-                    onOpenWalletDialog = { walletDialogTicket = ticket },
-                    onOpenPdfPreview = { pdfPreviewTicket = ticket },
-                    onRequestVipSupport = { onRequestVipSupportForTicket(ticket) },
-                    onRequestCancellation = { onRequestCancellationQuote(ticket) }
+                    onSelectEsim = { pkg -> onSelectTicketEsim(selectedFullTicket, pkg) },
+                    onToggleLounge = { lounge -> onToggleTicketLounge(selectedFullTicket, lounge) },
+                    onToggleExperience = { exp -> onToggleTicketExperience(selectedFullTicket, exp) },
+                    onOpenWalletDialog = {
+                        onToggleGoogleWallet(selectedFullTicket)
+                        walletDialogTicket = selectedFullTicket
+                    },
+                    onOpenPdfPreview = { pdfPreviewTicket = selectedFullTicket },
+                    onRequestVipSupport = { onRequestVipSupportForTicket(selectedFullTicket) },
+                    onRequestCancellation = { onRequestCancellationQuote(selectedFullTicket) }
                 )
+            }
+        } else {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Minhas Viagens & Carteira Digital",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Toque em qualquer bilhete para abrir o Cartão de Embarque completo, QR Code, Radar e serviços VIP",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (tickets.isEmpty()) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("empty_tickets_wallet_state")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ConfirmationNumber,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Text(
+                                text = "Nenhum Bilhete Emitido Ainda",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "Sua carteira exibe exclusivamente passagens aéreas reais emitidas após confirmação de pagamento Stripe e reserva IATA NDC. Escolha um voo na aba Voos para emitir seu primeiro E-Ticket.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(tickets, key = { it.id.ifBlank { it.orderId } }) { ticket ->
+                    val ticketKey = ticket.id.ifBlank { ticket.orderId }
+                    CompactTicketCoverCard(
+                        ticket = ticket,
+                        cancellationConfirmation = confirmedCancellations[ticketKey],
+                        onOpenFullTicket = { selectedTicketKey = ticketKey },
+                        onQuickDownloadPdf = { pdfPreviewTicket = ticket },
+                        onQuickAddGoogleWallet = {
+                            onToggleGoogleWallet(ticket)
+                            walletDialogTicket = ticket
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Cartão de Bilhete Compacto e Limpo:
+ * Exibe a foto de capa da cidade/país de destino (`DestinationCoverHeader` garantido para todas as cidades,
+ * incluindo Campinas / São Paulo - VCP) + resumo essencial da rota, data, assento e PNR.
+ * Ao clicar, abre o bilhete completo (`BoardingPassCard`) com QR Code e todos os detalhes.
+ */
+@Composable
+private fun CompactTicketCoverCard(
+    ticket: IssuedTicket,
+    cancellationConfirmation: OrderCancellationConfirmation?,
+    onOpenFullTicket: () -> Unit,
+    onQuickDownloadPdf: () -> Unit = {},
+    onQuickAddGoogleWallet: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val isCancelled = ticket.isCancelled || cancellationConfirmation != null
+    val resolvedDestCity = remember(ticket.destinationIata, ticket.destinationCity) {
+        ticket.destinationCity.ifBlank {
+            PlaceAutocompleteCatalog.resolveByIata(ticket.destinationIata).cityName
+        }
+    }
+    val resolvedOriginCity = remember(ticket.originIata, ticket.originCity) {
+        ticket.originCity.ifBlank {
+            PlaceAutocompleteCatalog.resolveByIata(ticket.originIata).cityName
+        }
+    }
+    val depDate = ticket.departureIso.take(10)
+    val depTime = ticket.departureIso.drop(11).take(5).ifBlank { "09:30" }
+    val arrTime = ticket.arrivalIso.drop(11).take(5).ifBlank { "12:15" }
+
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 8.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                RoundedCornerShape(22.dp)
+            )
+            .clickable { onOpenFullTicket() }
+            .testTag("compact_ticket_card_${ticket.bookingReference}")
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Foto de Capa Real da Cidade / País de Destino
+            DestinationCoverHeader(
+                destinationIata = ticket.destinationIata,
+                destinationCity = resolvedDestCity,
+                bookingReference = ticket.bookingReference,
+                cabinClass = ticket.cabinClass,
+                bannerHeight = 168.dp
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Linha 1: Rota + Horários + Status
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FlightTakeoff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "$resolvedOriginCity (${ticket.originIata}) ➔ $resolvedDestCity (${ticket.destinationIata})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "📅 $depDate • 🕒 $depTime ➔ $arrTime • ${ticket.airlineName} (${ticket.flightNumber})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (isCancelled) {
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.16f)
+                        } else {
+                            Color(0xFF10B981).copy(alpha = 0.16f)
+                        }
+                    ) {
+                        Text(
+                            text = if (isCancelled) "Cancelado" else "Confirmado",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isCancelled) MaterialTheme.colorScheme.error else Color(0xFF10B981),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                // Linha 2: Passageiro, Assento e Valor Pago
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "👤 ${ticket.passengerName} • 💺 Assento ${ticket.seatDesignator}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = MarkupEngine.formatEur(ticket.totalChargedEur),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // Atalhos Diretos de 1 Toque: Baixar PDF e Adicionar à Google Wallet
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            TicketPdfExporter.saveTicketPdfToDownloads(context, ticket)
+                            onQuickDownloadPdf()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("compact_download_pdf_button_${ticket.bookingReference}"),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PictureAsPdf,
+                            contentDescription = "Baixar PDF",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Baixar PDF",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            TicketPdfExporter.addAndExportToGoogleWallet(context, ticket)
+                            onQuickAddGoogleWallet()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("compact_google_wallet_button_${ticket.bookingReference}"),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (ticket.addedToGoogleWallet) {
+                                Color(0xFF10B981)
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            contentColor = if (ticket.addedToGoogleWallet) {
+                                Color.White
+                            } else {
+                                MaterialTheme.colorScheme.onPrimary
+                            }
+                        )
+                    ) {
+                        Icon(
+                            imageVector = if (ticket.addedToGoogleWallet) {
+                                Icons.Default.CheckCircle
+                            } else {
+                                Icons.Default.AccountBalanceWallet
+                            },
+                            contentDescription = "Google Wallet",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (ticket.addedToGoogleWallet) "Na Wallet ✓" else "Google Wallet",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                // Linha 3: Botão Limpo para Abrir o Bilhete Completo
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("open_full_ticket_button_${ticket.bookingReference}"),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Toque para abrir Bilhete Completo & QR Code",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Abrir bilhete",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }
@@ -431,7 +777,10 @@ private fun BoardingPassCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = onOpenPdfPreview,
+                            onClick = {
+                                TicketPdfExporter.saveTicketPdfToDownloads(context, ticket)
+                                onOpenPdfPreview()
+                            },
                             modifier = Modifier
                                 .weight(1.2f)
                                 .height(50.dp)
@@ -449,14 +798,14 @@ private fun BoardingPassCard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "E-Ticket PDF (Logo & QR)",
+                                text = "Baixar E-Ticket PDF",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.ExtraBold
                             )
                         }
 
                         OutlinedButton(
-                            onClick = { TicketPdfExporter.shareTicketAsText(context, ticket) },
+                            onClick = { TicketPdfExporter.exportAndShareTicketPdf(context, ticket) },
                             modifier = Modifier
                                 .weight(0.8f)
                                 .height(50.dp)
@@ -465,13 +814,13 @@ private fun BoardingPassCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Share,
-                                contentDescription = "Compartilhar Recibo",
+                                contentDescription = "Compartilhar PDF",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Recibo Texto",
+                                text = "Enviar PDF",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold
                             )
@@ -480,7 +829,10 @@ private fun BoardingPassCard(
 
                     // 5. Botão de Exportação Apple Wallet / Google Wallet
                     Button(
-                        onClick = onOpenWalletDialog,
+                        onClick = {
+                            TicketPdfExporter.addAndExportToGoogleWallet(context, ticket)
+                            onOpenWalletDialog()
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
@@ -488,11 +840,15 @@ private fun BoardingPassCard(
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (ticket.addedToGoogleWallet) {
-                                MaterialTheme.colorScheme.tertiary
+                                Color(0xFF10B981)
                             } else {
                                 MaterialTheme.colorScheme.primary
                             },
-                            contentColor = MaterialTheme.colorScheme.onPrimary
+                            contentColor = if (ticket.addedToGoogleWallet) {
+                                Color.White
+                            } else {
+                                MaterialTheme.colorScheme.onPrimary
+                            }
                         )
                     ) {
                         Icon(
@@ -506,9 +862,9 @@ private fun BoardingPassCard(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = if (ticket.addedToGoogleWallet) {
-                                "Salvo na Apple Wallet & Google Wallet (Abrir Passe)"
+                                "Adicionado à Google Wallet ✓ (Toque para Abrir Passe)"
                             } else {
-                                "Exportar para Apple Wallet / Google Wallet"
+                                "Adicionar à Google Wallet / Apple Wallet"
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold

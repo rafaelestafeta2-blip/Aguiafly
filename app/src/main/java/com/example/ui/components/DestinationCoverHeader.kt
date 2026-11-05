@@ -104,11 +104,16 @@ fun DestinationCoverHeader(
             )
         }
 
-        // 2. Foto de Capa Real da Cidade e País de Destino
+        // 2. Foto de Capa Real da Cidade e País de Destino (com fallback automático garantido)
         AsyncImage(
             model = activeCoverUrl,
             contentDescription = "Foto de capa de ${baseMeta.cityName}, ${baseMeta.countryName}",
             contentScale = ContentScale.Crop,
+            onError = {
+                if (dynamicPhotoUrl != null) {
+                    dynamicPhotoUrl = null
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
 

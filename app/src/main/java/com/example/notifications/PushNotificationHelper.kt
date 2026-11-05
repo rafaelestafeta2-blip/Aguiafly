@@ -286,4 +286,90 @@ object PushNotificationHelper {
             // Ignored if permission was revoked at runtime
         }
     }
+
+    fun showTicketPdfDownloadedNotification(
+        context: Context,
+        ticket: com.example.data.model.IssuedTicket,
+        pdfUri: android.net.Uri
+    ) {
+        ensureNotificationChannel(context)
+        if (!hasNotificationPermission(context)) return
+
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(pdfUri, "application/pdf")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val fallbackIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val targetIntent = if (viewIntent.resolveActivity(context.packageManager) != null) {
+            viewIntent
+        } else {
+            fallbackIntent
+        }
+
+        val notifId = 9100 + (ticket.bookingReference.hashCode() and 0x0FFF)
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notifId,
+            targetIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val title = "📄 E-Ticket PDF Baixado • PNR ${ticket.bookingReference}"
+        val body = "Arquivo AguiaFly_ETicket_${ticket.bookingReference}.pdf salvo na pasta Downloads (${ticket.originIata} ➔ ${ticket.destinationIata} • Voo ${ticket.flightNumber}). Toque para abrir."
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher_round)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(notifId, notification)
+        } catch (_: SecurityException) {
+        }
+    }
+
+    fun showGoogleWalletPassAddedNotification(
+        context: Context,
+        ticket: com.example.data.model.IssuedTicket
+    ) {
+        ensureNotificationChannel(context)
+        if (!hasNotificationPermission(context)) return
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val notifId = 9500 + (ticket.bookingReference.hashCode() and 0x0FFF)
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notifId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val title = "💳 Cartão de Embarque na Google Wallet • ${ticket.bookingReference}"
+        val body = "Voo ${ticket.flightNumber} (${ticket.originIata} ➔ ${ticket.destinationIata}) • Assento ${ticket.seatDesignator} sincronizado na sua Carteira Digital e pronto para embarque."
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher_round)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(notifId, notification)
+        } catch (_: SecurityException) {
+        }
+    }
 }
+

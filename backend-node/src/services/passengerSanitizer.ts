@@ -13,8 +13,10 @@
 export type DuffelGender = "m" | "f";
 export type DuffelTitle = "mr" | "ms" | "mrs" | "miss" | "dr";
 
+export type DuffelIdentityDocumentType = "passport" | "identity_card" | "national_identity_card";
+
 export interface RawIdentityDocumentInput {
-  type?: "passport" | "national_identity_card";
+  type?: DuffelIdentityDocumentType | string;
   unique_identifier: string;
   expires_on: string; // YYYY-MM-DD
   issuing_country_code: string; // ISO 3166-1 alpha-2 (ex: "PT", "BR", "ES")
@@ -33,7 +35,7 @@ export interface RawPassengerInput {
 }
 
 export interface SanitizedIdentityDocument {
-  type: "passport";
+  type: "passport" | "identity_card";
   unique_identifier: string;
   expires_on: string;
   issuing_country_code: string;
@@ -126,16 +128,42 @@ export function sanitizeE164PhoneNumber(rawPhone: string, defaultCountryDialCode
 /**
  * Valida formato de data ISO-8601 (YYYY-MM-DD) e retorna o objeto Date UTC correspondente.
  */
+/**
+ * Normaliza formatos comuns (DD/MM/YYYY, DD-MM-YYYY) para YYYY-MM-DD se necessário e
+ * valida o formato de data ISO-8601 (YYYY-MM-DD), retornando a string normalizada e o objeto Date UTC.
+ */
+export function normalizeToStrictIsoDateString(rawDateStr: string): string {
+  const clean = (rawDateStr || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return clean;
+  }
+  const ddmmyyyy = clean.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+  if (ddmmyyyy) {
+    const [, d, m, y] = ddmmyyyy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const yyyymmdd = clean.match(/^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$/);
+  if (yyyymmdd) {
+    const [, y, m, d] = yyyymmdd;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  if (clean.length >= 10 && /^\d{4}-\d{2}-\d{2}$/.test(clean.slice(0, 10))) {
+    return clean.slice(0, 10);
+  }
+  return clean;
+}
+
 function parseStrictIsoDate(dateStr: string, fieldName: string): Date {
+  const normalized = normalizeToStrictIsoDateString(dateStr);
   const isoRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!dateStr || !isoRegex.test(dateStr.trim())) {
+  if (!normalized || !isoRegex.test(normalized)) {
     throw new PassengerValidationError(
       fieldName,
       `O campo '${fieldName}' deve estar no formato estrito YYYY-MM-DD (recebido: '${dateStr}').`
     );
   }
 
-  const parsed = new Date(`${dateStr.trim()}T00:00:00Z`);
+  const parsed = new Date(`${normalized}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) {
     throw new PassengerValidationError(fieldName, `Data inválida informada em '${fieldName}': ${dateStr}.`);
   }
@@ -143,7 +171,7 @@ function parseStrictIsoDate(dateStr: string, fieldName: string): Date {
 }
 
 /**
- * Normaliza o título e o género para os valores aceitos pela Duffel API v2.
+ * Normaliza o título e o género para os valores estritos aceitos pela Duffel API v2 ("m" | "f").
  */
 function normalizeGender(rawGender?: string): DuffelGender {
   const cleaned = (rawGender || "m").trim().toLowerCase();
@@ -153,7 +181,7 @@ function normalizeGender(rawGender?: string): DuffelGender {
   if (cleaned === "m" || cleaned === "male" || cleaned === "masculino") {
     return "m";
   }
-  throw new PassengerValidationError("gender", "O género do passageiro deve ser 'm' ou 'f'.");
+  throw new PassengerValidationError("gender", "O género do passageiro deve ser estritamente 'm' ou 'f'.");
 }
 
 function normalizeTitle(rawTitle?: string, gender: DuffelGender = "m"): DuffelTitle {
@@ -165,6 +193,20 @@ function normalizeTitle(rawTitle?: string, gender: DuffelGender = "m"): DuffelTi
   return gender === "f" ? "ms" : "mr";
 }
 
+function normalizeIdentityDocumentType(rawType?: string): "passport" | "identity_card" {
+  const cleaned = (rawType || "passport").trim().toLowerCase();
+  if (
+    cleaned === "identity_card" ||
+    cleaned === "national_identity_card" ||
+    cleaned === "citizen_card" ||
+    cleaned === "cc" ||
+    cleaned === "id"
+  ) {
+    return "identity_card";
+  }
+  return "passport";
+}
+
 /**
  * Verifica se uma rota aérea é internacional comparando os códigos IATA/países de origem e destino.
  */
@@ -174,14 +216,19 @@ export function isInternationalRouteByIata(originIata: string, destinationIata: 
     OPO: "PT",
     FAO: "PT",
     FNC: "PT",
+    PDL: "PT",
+    TER: "PT",
     MAD: "ES",
     BCN: "ES",
     IBZ: "ES",
+    AGP: "ES",
+    PMI: "ES",
     CDG: "FR",
     ORY: "FR",
     NCE: "FR",
     LHR: "GB",
     LGW: "GB",
+    STN: "GB",
     DUB: "IE",
     FCO: "IT",
     MXP: "IT",
@@ -201,7 +248,13 @@ export function isInternationalRouteByIata(originIata: string, destinationIata: 
     GRU: "BR",
     GIG: "BR",
     VCP: "BR",
+    CNF: "BR",
+    BSB: "BR",
+    SSA: "BR",
+    REC: "BR",
+    FOR: "BR",
     JFK: "US",
+    EWR: "US",
     MIA: "US",
     LAX: "US",
   };
@@ -219,7 +272,7 @@ export function isInternationalRouteByIata(originIata: string, destinationIata: 
 }
 
 /**
- * Valida e sanitiza todos os dados obrigatórios do passageiro e seus documentos (APIS / Passaporte)
+ * Valida e sanitiza todos os dados obrigatórios do passageiro e seus documentos (APIS / Passaporte / Cartão de Cidadão)
  * antes de enviar para o endpoint POST /air/orders da Duffel.
  */
 export function sanitizeAndValidatePassenger(
@@ -249,8 +302,9 @@ export function sanitizeAndValidatePassenger(
     );
   }
 
-  // Validação da data de nascimento (born_on)
-  const bornDate = parseStrictIsoDate(raw.born_on, "born_on");
+  // Validação e formatação da data de nascimento (born_on em YYYY-MM-DD)
+  const normalizedBornOn = normalizeToStrictIsoDateString(raw.born_on);
+  const bornDate = parseStrictIsoDate(normalizedBornOn, "born_on");
   const now = new Date();
   if (bornDate >= now) {
     throw new PassengerValidationError("born_on", "A data de nascimento (born_on) deve ser anterior à data atual.");
@@ -263,19 +317,21 @@ export function sanitizeAndValidatePassenger(
     throw new PassengerValidationError("email", `Endereço de e-mail inválido: '${raw.email}'.`);
   }
 
-  // Sanitização de telefone E.164
+  // Sanitização de telefone E.164 (+351...)
   const sanitizedPhone = sanitizeE164PhoneNumber(raw.phone_number);
 
-  // Normalização de género e título IATA
+  // Normalização estrita de género ("m" | "f") e título IATA
   const gender = normalizeGender(raw.gender);
   const title = normalizeTitle(raw.title, gender);
 
-  // Validação e sanitização de documentos de identificação (identity_documents) para rotas internacionais
-  const rawDocs = raw.identity_documents || [];
+  // Validação e sanitização de documentos de identificação (identity_documents)
+  const rawDocs = (raw.identity_documents || []).filter(
+    (d) => d && typeof d.unique_identifier === "string" && d.unique_identifier.trim().length > 0
+  );
   if (options.requireIdentityDocument && rawDocs.length === 0) {
     throw new PassengerValidationError(
       "identity_documents",
-      "Esta rota internacional exige os dados de Passaporte/Documento de Identificação (identity_documents)."
+      "Esta rota exige os dados de Passaporte ou Documento de Identificação (identity_documents)."
     );
   }
 
@@ -299,14 +355,15 @@ export function sanitizeAndValidatePassenger(
         );
       }
 
+      const normalizedExpiresOn = normalizeToStrictIsoDateString(doc.expires_on);
       const expiresDate = parseStrictIsoDate(
-        doc.expires_on,
+        normalizedExpiresOn,
         `identity_documents[${index}].expires_on`
       );
       if (expiresDate <= referenceFlightDate) {
         throw new PassengerValidationError(
           `identity_documents[${index}].expires_on`,
-          `O passaporte/documento (${cleanDocNumber}) expira em ${doc.expires_on}, antes ou na data do voo.`
+          `O passaporte/documento (${cleanDocNumber}) expira em ${normalizedExpiresOn}, antes ou na data do voo.`
         );
       }
 
@@ -317,14 +374,16 @@ export function sanitizeAndValidatePassenger(
       if (cleanCountry.length !== 2) {
         throw new PassengerValidationError(
           `identity_documents[${index}].issuing_country_code`,
-          "O país emissor do documento deve ser um código ISO de 2 letras (ex: PT, BR, ES, FR)."
+          "O país emissor do documento deve ser um código ISO-2 de 2 letras (ex: PT, BR, ES, FR)."
         );
       }
 
+      const normalizedDocType = normalizeIdentityDocumentType(doc.type);
+
       return {
-        type: "passport" as const,
+        type: normalizedDocType,
         unique_identifier: cleanDocNumber,
-        expires_on: doc.expires_on.trim(),
+        expires_on: normalizedExpiresOn,
         issuing_country_code: cleanCountry,
       };
     });
@@ -334,7 +393,7 @@ export function sanitizeAndValidatePassenger(
     id: raw.id.trim(),
     given_name: sanitizedGivenName,
     family_name: sanitizedFamilyName,
-    born_on: raw.born_on.trim(),
+    born_on: normalizedBornOn,
     gender,
     title,
     phone_number: sanitizedPhone,
