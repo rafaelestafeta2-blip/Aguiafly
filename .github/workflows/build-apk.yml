@@ -143,35 +143,118 @@ jobs:
 
       - name: Preparar ficheiro .env (Com ou Sem GitHub Secrets)
         env:
+          USE_TEST_APIS: ${{ secrets.USE_TEST_APIS }}
+          NODE_ENV: ${{ secrets.NODE_ENV }}
           DUFFEL_API_TOKEN: ${{ secrets.DUFFEL_API_TOKEN }}
+          DUFFEL_API_TOKEN_TEST: ${{ secrets.DUFFEL_API_TOKEN_TEST }}
+          DUFFEL_TEST_TOKEN: ${{ secrets.DUFFEL_TEST_TOKEN }}
+          DUFFEL_API_TOKEN_LIVE: ${{ secrets.DUFFEL_API_TOKEN_LIVE }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_PUBLISHABLE_KEY_TEST: ${{ secrets.STRIPE_PUBLISHABLE_KEY_TEST }}
+          STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+          STRIPE_PUBLISHABLE_KEY_LIVE: ${{ secrets.STRIPE_PUBLISHABLE_KEY_LIVE }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_SECRET_KEY_TEST: ${{ secrets.STRIPE_SECRET_KEY_TEST }}
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+          STRIPE_SECRET_KEY_LIVE: ${{ secrets.STRIPE_SECRET_KEY_LIVE }}
         run: |
-          CLEAN_DUFFEL=$(printf "%s" "$DUFFEL_API_TOKEN" | tr -d '"\r\n')
-          CLEAN_STRIPE_PUB=$(printf "%s" "$STRIPE_PUBLISHABLE_KEY" | tr -d '"\r\n')
-          CLEAN_STRIPE_SEC=$(printf "%s" "$STRIPE_SECRET_KEY" | tr -d '"\r\n')
+          # 1. Iniciar com a base de .env.example
+          if [ -f ".env.example" ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
 
-          if [ -n "$CLEAN_DUFFEL" ]; then
-            echo "DUFFEL_API_TOKEN=${CLEAN_DUFFEL}" > .env
+          # 2. Configurar modo de teste / sandbox (Padrão: true)
+          CLEAN_USE_TEST=$(printf "%s" "$USE_TEST_APIS" | tr -d '"\r\n')
+          CLEAN_NODE_ENV=$(printf "%s" "$NODE_ENV" | tr -d '"\r\n')
+          if [ -n "$CLEAN_USE_TEST" ]; then
+            sed -i "s|^USE_TEST_APIS=.*|USE_TEST_APIS=${CLEAN_USE_TEST}|" .env || echo "USE_TEST_APIS=${CLEAN_USE_TEST}" >> .env
+          else
+            sed -i "s|^USE_TEST_APIS=.*|USE_TEST_APIS=true|" .env || echo "USE_TEST_APIS=true" >> .env
+          fi
+          if [ -n "$CLEAN_NODE_ENV" ]; then
+            sed -i "s|^NODE_ENV=.*|NODE_ENV=${CLEAN_NODE_ENV}|" .env || echo "NODE_ENV=${CLEAN_NODE_ENV}" >> .env
+          else
+            sed -i "s|^NODE_ENV=.*|NODE_ENV=development|" .env || echo "NODE_ENV=development" >> .env
+          fi
+
+          # 3. Mapear Duffel API Tokens
+          RAW_DUFFEL_TEST="${DUFFEL_API_TOKEN_TEST:-${DUFFEL_TEST_TOKEN:-}}"
+          RAW_DUFFEL_GEN="${DUFFEL_API_TOKEN:-}"
+          RAW_DUFFEL_LIVE="${DUFFEL_API_TOKEN_LIVE:-}"
+
+          CLEAN_DUFFEL_TEST=$(printf "%s" "$RAW_DUFFEL_TEST" | tr -d '"\r\n')
+          CLEAN_DUFFEL_GEN=$(printf "%s" "$RAW_DUFFEL_GEN" | tr -d '"\r\n')
+          CLEAN_DUFFEL_LIVE=$(printf "%s" "$RAW_DUFFEL_LIVE" | tr -d '"\r\n')
+
+          if [ -n "$CLEAN_DUFFEL_TEST" ]; then
+            sed -i "s|^DUFFEL_API_TOKEN_TEST=.*|DUFFEL_API_TOKEN_TEST=${CLEAN_DUFFEL_TEST}|" .env || echo "DUFFEL_API_TOKEN_TEST=${CLEAN_DUFFEL_TEST}" >> .env
+            echo "✔ DUFFEL_API_TOKEN_TEST carregado dos GitHub Secrets."
+          fi
+          if [ -n "$CLEAN_DUFFEL_GEN" ]; then
+            sed -i "s|^DUFFEL_API_TOKEN=.*|DUFFEL_API_TOKEN=${CLEAN_DUFFEL_GEN}|" .env || echo "DUFFEL_API_TOKEN=${CLEAN_DUFFEL_GEN}" >> .env
+            if [[ "$CLEAN_DUFFEL_GEN" == duffel_test_* ]]; then
+              sed -i "s|^DUFFEL_API_TOKEN_TEST=.*|DUFFEL_API_TOKEN_TEST=${CLEAN_DUFFEL_GEN}|" .env || echo "DUFFEL_API_TOKEN_TEST=${CLEAN_DUFFEL_GEN}" >> .env
+            fi
             echo "✔ DUFFEL_API_TOKEN carregado dos GitHub Secrets."
-          else
-            echo "DUFFEL_API_TOKEN=DUFFEL_SANDBOX_TOKEN_PLACEHOLDER" > .env
-            echo "ℹ DUFFEL_API_TOKEN não definido nos Secrets — a usar modo Sandbox/Fallback (não impede a geração do APK)."
           fi
-          if [ -n "$CLEAN_STRIPE_PUB" ]; then
-            echo "STRIPE_PUBLISHABLE_KEY=${CLEAN_STRIPE_PUB}" >> .env
+          if [ -n "$CLEAN_DUFFEL_LIVE" ]; then
+            sed -i "s|^DUFFEL_API_TOKEN_LIVE=.*|DUFFEL_API_TOKEN_LIVE=${CLEAN_DUFFEL_LIVE}|" .env || echo "DUFFEL_API_TOKEN_LIVE=${CLEAN_DUFFEL_LIVE}" >> .env
+            echo "✔ DUFFEL_API_TOKEN_LIVE carregado dos GitHub Secrets."
+          fi
+
+          # 4. Mapear Stripe Publishable Keys
+          RAW_STRIPE_PUB_TEST="${STRIPE_PUBLISHABLE_KEY_TEST:-${STRIPE_TEST_PUBLISHABLE_KEY:-}}"
+          RAW_STRIPE_PUB_GEN="${STRIPE_PUBLISHABLE_KEY:-}"
+          RAW_STRIPE_PUB_LIVE="${STRIPE_PUBLISHABLE_KEY_LIVE:-}"
+
+          CLEAN_STRIPE_PUB_TEST=$(printf "%s" "$RAW_STRIPE_PUB_TEST" | tr -d '"\r\n')
+          CLEAN_STRIPE_PUB_GEN=$(printf "%s" "$RAW_STRIPE_PUB_GEN" | tr -d '"\r\n')
+          CLEAN_STRIPE_PUB_LIVE=$(printf "%s" "$RAW_STRIPE_PUB_LIVE" | tr -d '"\r\n')
+
+          if [ -n "$CLEAN_STRIPE_PUB_TEST" ]; then
+            sed -i "s|^STRIPE_PUBLISHABLE_KEY_TEST=.*|STRIPE_PUBLISHABLE_KEY_TEST=${CLEAN_STRIPE_PUB_TEST}|" .env || echo "STRIPE_PUBLISHABLE_KEY_TEST=${CLEAN_STRIPE_PUB_TEST}" >> .env
+            echo "✔ STRIPE_PUBLISHABLE_KEY_TEST carregado dos GitHub Secrets."
+          fi
+          if [ -n "$CLEAN_STRIPE_PUB_GEN" ]; then
+            sed -i "s|^STRIPE_PUBLISHABLE_KEY=.*|STRIPE_PUBLISHABLE_KEY=${CLEAN_STRIPE_PUB_GEN}|" .env || echo "STRIPE_PUBLISHABLE_KEY=${CLEAN_STRIPE_PUB_GEN}" >> .env
+            if [[ "$CLEAN_STRIPE_PUB_GEN" == pk_test_* ]]; then
+              sed -i "s|^STRIPE_PUBLISHABLE_KEY_TEST=.*|STRIPE_PUBLISHABLE_KEY_TEST=${CLEAN_STRIPE_PUB_GEN}|" .env || echo "STRIPE_PUBLISHABLE_KEY_TEST=${CLEAN_STRIPE_PUB_GEN}" >> .env
+            fi
             echo "✔ STRIPE_PUBLISHABLE_KEY carregado dos GitHub Secrets."
-          else
-            echo "STRIPE_PUBLISHABLE_KEY=STRIPE_PUBLISHABLE_KEY_PLACEHOLDER" >> .env
-            echo "ℹ STRIPE_PUBLISHABLE_KEY não definido nos Secrets — a usar chave de contingência."
           fi
-          if [ -n "$CLEAN_STRIPE_SEC" ]; then
-            echo "STRIPE_SECRET_KEY=${CLEAN_STRIPE_SEC}" >> .env
+          if [ -n "$CLEAN_STRIPE_PUB_LIVE" ]; then
+            sed -i "s|^STRIPE_PUBLISHABLE_KEY_LIVE=.*|STRIPE_PUBLISHABLE_KEY_LIVE=${CLEAN_STRIPE_PUB_LIVE}|" .env || echo "STRIPE_PUBLISHABLE_KEY_LIVE=${CLEAN_STRIPE_PUB_LIVE}" >> .env
+            echo "✔ STRIPE_PUBLISHABLE_KEY_LIVE carregado dos GitHub Secrets."
+          fi
+
+          # 5. Mapear Stripe Secret Keys
+          RAW_STRIPE_SEC_TEST="${STRIPE_SECRET_KEY_TEST:-${STRIPE_TEST_SECRET_KEY:-}}"
+          RAW_STRIPE_SEC_GEN="${STRIPE_SECRET_KEY:-}"
+          RAW_STRIPE_SEC_LIVE="${STRIPE_SECRET_KEY_LIVE:-}"
+
+          CLEAN_STRIPE_SEC_TEST=$(printf "%s" "$RAW_STRIPE_SEC_TEST" | tr -d '"\r\n')
+          CLEAN_STRIPE_SEC_GEN=$(printf "%s" "$RAW_STRIPE_SEC_GEN" | tr -d '"\r\n')
+          CLEAN_STRIPE_SEC_LIVE=$(printf "%s" "$RAW_STRIPE_SEC_LIVE" | tr -d '"\r\n')
+
+          if [ -n "$CLEAN_STRIPE_SEC_TEST" ]; then
+            sed -i "s|^STRIPE_SECRET_KEY_TEST=.*|STRIPE_SECRET_KEY_TEST=${CLEAN_STRIPE_SEC_TEST}|" .env || echo "STRIPE_SECRET_KEY_TEST=${CLEAN_STRIPE_SEC_TEST}" >> .env
+            echo "✔ STRIPE_SECRET_KEY_TEST carregado dos GitHub Secrets."
+          fi
+          if [ -n "$CLEAN_STRIPE_SEC_GEN" ]; then
+            sed -i "s|^STRIPE_SECRET_KEY=.*|STRIPE_SECRET_KEY=${CLEAN_STRIPE_SEC_GEN}|" .env || echo "STRIPE_SECRET_KEY=${CLEAN_STRIPE_SEC_GEN}" >> .env
+            if [[ "$CLEAN_STRIPE_SEC_GEN" == sk_test_* ]]; then
+              sed -i "s|^STRIPE_SECRET_KEY_TEST=.*|STRIPE_SECRET_KEY_TEST=${CLEAN_STRIPE_SEC_GEN}|" .env || echo "STRIPE_SECRET_KEY_TEST=${CLEAN_STRIPE_SEC_GEN}" >> .env
+            fi
             echo "✔ STRIPE_SECRET_KEY carregado dos GitHub Secrets."
-          else
-            echo "STRIPE_SECRET_KEY=STRIPE_SECRET_KEY_PLACEHOLDER" >> .env
-            echo "ℹ STRIPE_SECRET_KEY não definido nos Secrets — a usar chave de contingência."
           fi
+          if [ -n "$CLEAN_STRIPE_SEC_LIVE" ]; then
+            sed -i "s|^STRIPE_SECRET_KEY_LIVE=.*|STRIPE_SECRET_KEY_LIVE=${CLEAN_STRIPE_SEC_LIVE}|" .env || echo "STRIPE_SECRET_KEY_LIVE=${CLEAN_STRIPE_SEC_LIVE}" >> .env
+            echo "✔ STRIPE_SECRET_KEY_LIVE carregado dos GitHub Secrets."
+          fi
+
+          echo "✔ Ficheiro .env configurado com sucesso para a compilação do APK."
 
       - name: Configurar Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
