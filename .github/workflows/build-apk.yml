@@ -157,6 +157,9 @@ jobs:
           STRIPE_SECRET_KEY_TEST: ${{ secrets.STRIPE_SECRET_KEY_TEST }}
           STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
           STRIPE_SECRET_KEY_LIVE: ${{ secrets.STRIPE_SECRET_KEY_LIVE }}
+          GOOGLE_WALLET_ISSUER_ID: ${{ secrets.GOOGLE_WALLET_ISSUER_ID }}
+          GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_WALLET_PRIVATE_KEY: ${{ secrets.GOOGLE_WALLET_PRIVATE_KEY }}
         run: |
           # 1. Iniciar com a base de .env.example
           if [ -f ".env.example" ]; then
@@ -252,6 +255,25 @@ jobs:
           if [ -n "$CLEAN_STRIPE_SEC_LIVE" ]; then
             sed -i "s|^STRIPE_SECRET_KEY_LIVE=.*|STRIPE_SECRET_KEY_LIVE=${CLEAN_STRIPE_SEC_LIVE}|" .env || echo "STRIPE_SECRET_KEY_LIVE=${CLEAN_STRIPE_SEC_LIVE}" >> .env
             echo "✔ STRIPE_SECRET_KEY_LIVE carregado dos GitHub Secrets."
+          fi
+
+          # 6. Mapear Google Wallet API Keys (Issuer ID + Service Account)
+          CLEAN_GW_ISSUER=$(printf "%s" "$GOOGLE_WALLET_ISSUER_ID" | tr -d '"\r\n')
+          CLEAN_GW_EMAIL=$(printf "%s" "$GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL" | tr -d '"\r\n')
+          CLEAN_GW_KEY=$(printf "%s" "$GOOGLE_WALLET_PRIVATE_KEY" | tr -d '\r' | sed ':a;N;$!ba;s/\n/\\n/g')
+
+          if [ -n "$CLEAN_GW_ISSUER" ]; then
+            sed -i "s|^GOOGLE_WALLET_ISSUER_ID=.*|GOOGLE_WALLET_ISSUER_ID=${CLEAN_GW_ISSUER}|" .env || echo "GOOGLE_WALLET_ISSUER_ID=${CLEAN_GW_ISSUER}" >> .env
+            echo "✔ GOOGLE_WALLET_ISSUER_ID carregado dos GitHub Secrets."
+          fi
+          if [ -n "$CLEAN_GW_EMAIL" ]; then
+            sed -i "s|^GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL=.*|GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL=${CLEAN_GW_EMAIL}|" .env || echo "GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL=${CLEAN_GW_EMAIL}" >> .env
+            echo "✔ GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL carregado dos GitHub Secrets."
+          fi
+          if [ -n "$CLEAN_GW_KEY" ]; then
+            grep -v "^GOOGLE_WALLET_PRIVATE_KEY=" .env > .env.tmp && mv .env.tmp .env
+            echo "GOOGLE_WALLET_PRIVATE_KEY=${CLEAN_GW_KEY}" >> .env
+            echo "✔ GOOGLE_WALLET_PRIVATE_KEY carregado dos GitHub Secrets."
           fi
 
           echo "✔ Ficheiro .env configurado com sucesso para a compilação do APK."

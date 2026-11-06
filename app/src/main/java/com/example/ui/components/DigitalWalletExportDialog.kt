@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,6 +48,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.IssuedTicket
 import com.example.domain.checkin.AutoCheckInManager
+import com.example.domain.export.GoogleWalletPassSigner
 import com.example.domain.export.TicketPdfExporter
 
 @Composable
@@ -59,23 +61,27 @@ fun DigitalWalletExportDialog(
     val boarding = remember(ticket) {
         AutoCheckInManager.parseTicketCheckInState(ticket, forceImmediateCheckIn = true)
     }
+    val isJwtDirectConfigured = remember { GoogleWalletPassSigner.isDirectJwtConfigured() }
     var walletStatusBanner by remember {
-        mutableStateOf("✅ Cartão de Embarque sincronizado e salvo na Google Wallet!")
+        mutableStateOf(
+            if (isJwtDirectConfigured) {
+                "✅ Passe JWT RS256 pronto! Toque abaixo para confirmar com a digital na Google Wallet."
+            } else {
+                "✅ Cartão de Embarque com QR Code ISO 18004 Real salvo no topo da Galeria para importação com digital na Google Wallet!"
+            }
+        )
     }
     val emerald = Color(0xFF10B981)
+    val amber = Color(0xFFF59E0B)
 
-    // Sincroniza e adiciona automaticamente o bilhete à Google Wallet logo ao abrir
+    // Gera e salva automaticamente o Cartão QR Real na Galeria (Pictures/AguiaFly) e o PDF em Downloads
     LaunchedEffect(ticket.bookingReference) {
         onConfirmWalletSync()
-        val res = TicketPdfExporter.addAndExportToGoogleWallet(
+        TicketPdfExporter.addAndExportToGoogleWallet(
             context = context,
             ticket = ticket,
             launchExternalWalletIfInstalled = false
         )
-        res.onSuccess {
-            walletStatusBanner =
-                "✅ Adicionado à Google Wallet! Passe PNR ${ticket.bookingReference} ativo e salvo em Downloads."
-        }
     }
 
     Dialog(
@@ -101,13 +107,13 @@ fun DigitalWalletExportDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                // Foto de Capa Panorâmica do Destino (Estilo Google Wallet Pass)
+                // Foto de Capa Panorâmica do Destino
                 DestinationCoverHeader(
                     destinationIata = ticket.destinationIata,
                     destinationCity = ticket.destinationCity,
                     bookingReference = ticket.bookingReference,
                     cabinClass = ticket.cabinClass,
-                    bannerHeight = 195.dp
+                    bannerHeight = 190.dp
                 )
 
                 Surface(
@@ -121,7 +127,7 @@ fun DigitalWalletExportDialog(
                         modifier = Modifier.padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Selo Verde de Confirmação Google Wallet Ativa
+                        // Selo Verde de Confirmação
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = emerald.copy(alpha = 0.16f),
@@ -150,6 +156,46 @@ fun DigitalWalletExportDialog(
                             }
                         }
 
+                        // Explicação clara de como confirmar com a digital na Google Wallet (mesmo em bilhetes de teste!)
+                        if (!isJwtDirectConfigured) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = amber.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, amber.copy(alpha = 0.7f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fingerprint,
+                                            contentDescription = null,
+                                            tint = amber,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "Como confirmar com a Digital no App Google Wallet:",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = amber
+                                        )
+                                    }
+                                    Text(
+                                        text = "1. Já salvámos o Cartão de Embarque com QR Code ISO 18004 Real como a 1ª foto da sua Galeria (Pictures/AguiaFly).\n" +
+                                            "2. Toque no botão verde abaixo para abrir a Google Wallet.\n" +
+                                            "3. Na Google Wallet, toque em '+ Adicionar à Carteira' ➔ 'Foto', selecione a 1ª imagem e confirme com a sua digital!",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
                         WalletDetailBlock(
                             label = "Passageiro & Número do Voo",
                             value = "${ticket.passengerName} • ${ticket.flightNumber} (${ticket.airlineName})"
@@ -175,12 +221,15 @@ fun DigitalWalletExportDialog(
                                     ticket = ticket,
                                     launchExternalWalletIfInstalled = true
                                 )
-                                walletStatusBanner =
-                                    "✅ Passe ${ticket.bookingReference} aberto e sincronizado na Google Wallet!"
+                                walletStatusBanner = if (isJwtDirectConfigured) {
+                                    "✅ Confirme com a sua digital na janela da Google Wallet!"
+                                } else {
+                                    "✅ Na Google Wallet: toque em '+ Adicionar à Carteira' ➔ 'Foto', escolha a 1ª imagem e confirme com a digital!"
+                                }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(52.dp)
+                                .height(54.dp)
                                 .testTag("confirm_google_apple_wallet_button"),
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -188,10 +237,14 @@ fun DigitalWalletExportDialog(
                                 contentColor = Color.White
                             )
                         ) {
-                            Icon(imageVector = Icons.Default.AccountBalanceWallet, contentDescription = null)
+                            Icon(imageVector = Icons.Default.Fingerprint, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Abrir na Google Wallet / Visualizar Passe",
+                                text = if (isJwtDirectConfigured) {
+                                    "Adicionar na Google Wallet (Confirmar com Digital)"
+                                } else {
+                                    "Abrir Google Wallet & Importar com Digital"
+                                },
                                 fontWeight = FontWeight.ExtraBold
                             )
                         }

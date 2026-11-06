@@ -218,10 +218,63 @@ object TicketPdfExporter {
     }
 
     /**
+     * Salva o Cartão de Embarque Óptico PNG (com QR Code ISO/IEC 18004 real) diretamente no topo
+     * da Galeria de Fotos do Android (`Pictures/AguiaFly`) para importação com 1 toque e biometria
+     * no recurso "Adicionar à Carteira -> Foto" do aplicativo Google Wallet.
+     */
+    fun saveGoogleWalletBoardingPassImageToGallery(context: Context, ticket: IssuedTicket): Result<Uri> {
+        return try {
+            val safeRef = ticket.bookingReference.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "PNR" }
+            val pngBitmap = GoogleWalletPassSigner.renderGoogleWalletBoardingPassPng(context, ticket)
+            val pngFileName = "AguiaFly_BoardingPass_${safeRef}.png"
+
+            val dir = File(context.cacheDir, "etickets").apply { mkdirs() }
+            val cachePngFile = File(dir, pngFileName)
+            FileOutputStream(cachePngFile).use { out ->
+                pngBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            val fileProviderUri = getFileProviderUri(context, cachePngFile)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                runCatching {
+                    resolver.delete(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        "${MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                        arrayOf(pngFileName)
+                    )
+                }
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, pngFileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/AguiaFly")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = runCatching {
+                    resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                }.getOrNull()
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        FileInputStream(cachePngFile).use { input -> input.copyTo(out) }
+                    }
+                    val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                    runCatching { resolver.update(uri, done, null, null) }
+                    return Result.success(uri)
+                }
+            }
+            Result.success(fileProviderUri)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Sincroniza e adiciona o Cartão de Embarque à Google Wallet:
-     * 1. Gera o passe oficial em PDF/Pass na pasta Downloads e Cache.
-     * 2. Dispara notificação de confirmação da Google Wallet e Toast.
-     * 3. Se o app oficial Google Wallet estiver instalado no telemóvel, permite abri-lo.
+     * 1. Gera o Cartão de Embarque PNG com QR Code ISO/IEC 18004 real no topo da Galeria (`Pictures/AguiaFly`)
+     *    e o passe PDF na pasta `Downloads`.
+     * 2. Dispara notificação de confirmação e Toast.
+     * 3. Se solicitado (`launchExternalWalletIfInstalled = true`), inicia o fluxo de adição no app Google Wallet
+     *    (via JWT RS256 `https://pay.google.com/gp/v/save/...` se configurado, ou via importação de Foto/QR com digital).
      */
     fun addAndExportToGoogleWallet(
         context: Context,
@@ -233,7 +286,10 @@ object TicketPdfExporter {
             val passFile = generateTicketPdfFile(context, ticket, customPrefix = "AguiaFly_GoogleWallet_Pass")
             val passFileName = "AguiaFly_GoogleWallet_${safeRef}.pdf"
 
-            // Salva também em Downloads para acesso offline imediato na carteira do dispositivo
+            // 1. Salva a imagem PNG de alta nitidez com QR Code ISO 18004 Real na Galeria (Pictures/AguiaFly)
+            saveGoogleWalletBoardingPassImageToGallery(context, ticket)
+
+            // 2. Salva também em Downloads para acesso em PDF
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val resolver = context.contentResolver
                 runCatching {
@@ -261,44 +317,15 @@ object TicketPdfExporter {
                 }
             }
 
-            // Gera metadados JSON padrão Google Wallet FlightObject no cache
-            val boarding = AutoCheckInManager.parseTicketCheckInState(ticket, forceImmediateCheckIn = true)
-            val walletJsonFile = File(File(context.cacheDir, "etickets").apply { mkdirs() }, "google_wallet_${safeRef}.json")
-            walletJsonFile.writeText(
-                """
-                {
-                  "issuerName": "AguiaFly Royal Sapphire OTA",
-                  "reviewStatus": "UNDER_REVIEW",
-                  "flightNumber": "${ticket.flightNumber}",
-                  "carrierIata": "${ticket.flightNumber.take(2)}",
-                  "airlineName": "${ticket.airlineName}",
-                  "reservationCode": "${ticket.bookingReference}",
-                  "eTicketNumber": "${boarding.eTicketNumber}",
-                  "passengerName": "${ticket.passengerName}",
-                  "originIata": "${ticket.originIata}",
-                  "originCity": "${ticket.originCity}",
-                  "destinationIata": "${ticket.destinationIata}",
-                  "destinationCity": "${ticket.destinationCity}",
-                  "departureIso": "${ticket.departureIso}",
-                  "arrivalIso": "${ticket.arrivalIso}",
-                  "terminal": "${boarding.terminal}",
-                  "gate": "${boarding.gate}",
-                  "seat": "${boarding.assignedSeat}",
-                  "boardingGroup": "${boarding.boardingGroup}",
-                  "barcodeType": "QR_CODE",
-                  "barcodeValue": "${boarding.cleanBcbpPayload}"
-                }
-                """.trimIndent()
-            )
-
             PushNotificationHelper.showGoogleWalletPassAddedNotification(context, ticket)
-            showToastSafe(
-                context,
-                "✅ Cartão de Embarque ${ticket.bookingReference} adicionado à Google Wallet!"
-            )
 
             if (launchExternalWalletIfInstalled) {
                 launchGoogleWalletAppOrPassViewer(context, ticket)
+            } else {
+                showToastSafe(
+                    context,
+                    "✅ Passe ${ticket.bookingReference} com QR Real gerado e salvo na Galeria & Downloads!"
+                )
             }
 
             Result.success("Google Wallet • Passe ${ticket.bookingReference} Ativo")
@@ -309,32 +336,100 @@ object TicketPdfExporter {
     }
 
     /**
-     * Abre o aplicativo Google Wallet instalado no Android ou, caso o dispositivo/emulador
-     * não possua o pacote `com.google.android.apps.walletnfcrel`, abre o visualizador/compartilhador
-     * do Passe Oficial.
+     * Inicia a adição do bilhete no aplicativo oficial Google Wallet:
+     * - MODO 1 (API JWT RS256 Direta): Se `GOOGLE_WALLET_ISSUER_ID` e `GOOGLE_WALLET_PRIVATE_KEY` estiverem
+     *   configurados, abre `https://pay.google.com/gp/v/save/{signed_jwt}`, que invoca a tela nativa da
+     *   Google Wallet com confirmação por digital e salva o `FlightObject` (inclusive em Modo Teste/Demo).
+     * - MODO 2 (Importação Nativa por Foto/QR com Biometria): Salva o Cartão de Embarque PNG com QR Code
+     *   ISO/IEC 18004 real como 1ª foto da Galeria e abre/envia para o app Google Wallet (`com.google.android.apps.walletnfcrel`),
+     *   onde basta tocar em "+ Adicionar à Carteira -> Foto" e confirmar com a digital!
      */
     fun launchGoogleWalletAppOrPassViewer(context: Context, ticket: IssuedTicket): Boolean {
         try {
+            // 1. Tenta primeiro o fluxo JWT RS256 Oficial ("Save to Google Wallet" 1-Click)
+            if (GoogleWalletPassSigner.isDirectJwtConfigured()) {
+                val signedUrlRes = GoogleWalletPassSigner.buildSignedSaveToGoogleWalletUrl(ticket)
+                val signedUrl = signedUrlRes.getOrNull()
+                if (!signedUrl.isNullOrBlank()) {
+                    val jwtIntent = Intent(Intent.ACTION_VIEW, Uri.parse(signedUrl)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(jwtIntent)
+                    return true
+                }
+            }
+
+            // 2. Garante que o Cartão de Embarque PNG com QR Code ISO 18004 real está no topo da Galeria
+            val galleryUriRes = saveGoogleWalletBoardingPassImageToGallery(context, ticket)
+            val safeRef = ticket.bookingReference.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "PNR" }
+            val cachePngFile = File(File(context.cacheDir, "etickets"), "AguiaFly_BoardingPass_${safeRef}.png")
+            val shareImageUri = if (cachePngFile.exists()) {
+                getFileProviderUri(context, cachePngFile)
+            } else {
+                galleryUriRes.getOrNull()
+            }
+
             val pm = context.packageManager
             val walletPackages = listOf(
                 "com.google.android.apps.walletnfcrel",
                 "com.google.commerce.tapandpay.android.card.app"
             )
+
+            // Tenta enviar a imagem PNG diretamente para o Google Wallet se suportar ACTION_SEND
+            if (shareImageUri != null) {
+                for (pkg in walletPackages) {
+                    val directSendIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        setPackage(pkg)
+                        putExtra(Intent.EXTRA_STREAM, shareImageUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    if (directSendIntent.resolveActivity(pm) != null) {
+                        showToastSafe(
+                            context,
+                            "📲 Confirme com a sua digital na Google Wallet para adicionar o bilhete ${ticket.bookingReference}!"
+                        )
+                        context.startActivity(directSendIntent)
+                        return true
+                    }
+                }
+            }
+
+            // Abre o app Google Wallet com o Cartão QR já posicionado em 1º lugar na Galeria para "+ Adicionar à Carteira -> Foto"
             for (pkg in walletPackages) {
                 val launchIntent = pm.getLaunchIntentForPackage(pkg)
                 if (launchIntent != null) {
+                    showToastSafe(
+                        context,
+                        "📲 Cartão QR salvo na Galeria! Na Google Wallet, toque em '+ Adicionar à Carteira' ➔ 'Foto', escolha a 1ª imagem e confirme com a digital!"
+                    )
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     context.startActivity(launchIntent)
                     return true
                 }
             }
-            val passFile = generateTicketPdfFile(context, ticket, customPrefix = "AguiaFly_GoogleWallet_Pass")
-            val uri = getFileProviderUri(context, passFile)
-            if (openPdfUriIfViewerInstalled(context, uri)) {
+
+            // Caso o telemóvel/emulador não tenha o app Google Wallet instalado, abre o menu de compartilhamento com a imagem PNG do passe
+            if (shareImageUri != null) {
+                val chooser = Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        putExtra(Intent.EXTRA_STREAM, shareImageUri)
+                        putExtra(
+                            Intent.EXTRA_TEXT,
+                            "Cartão de Embarque Oficial AguiaFly • PNR ${ticket.bookingReference} (${ticket.originIata} ➔ ${ticket.destinationIata})"
+                        )
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    },
+                    "Adicionar Cartão de Embarque na Carteira"
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
                 return true
             }
-            exportAndShareTicketPdf(context, ticket)
-            return true
+
+            return false
         } catch (_: Exception) {
             return false
         }
@@ -1079,33 +1174,22 @@ object TicketPdfExporter {
         moduleColor: Int
     ) {
         val safePayload = payload.ifBlank { "M1PASSENGER/AGUIAFLY EAGF999 LISCDGTP 1024 319C002A0001 100" }
-        val grid = 19
+        val matrix = IsoQrCodeEncoder.encodeToMatrix(safePayload)
+        val grid = matrix.size
+        if (grid <= 0) return
         val cell = size / grid
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val paint = Paint().apply {
             color = moduleColor
             style = Paint.Style.FILL
+            isAntiAlias = false
         }
 
         for (r in 0 until grid) {
             for (c in 0 until grid) {
-                val isTopLeftFinder = r in 0..4 && c in 0..4 &&
-                    (r == 0 || r == 4 || c == 0 || c == 4 || (r in 1..3 && c in 1..3 && (r == 2 && c == 2)))
-                val isTopRightFinder = r in 0..4 && c in (grid - 5) until grid &&
-                    (r == 0 || r == 4 || c == grid - 5 || c == grid - 1 || (r == 2 && c == grid - 3))
-                val isBottomLeftFinder = r in (grid - 5) until grid && c in 0..4 &&
-                    (r == grid - 5 || r == grid - 1 || c == 0 || c == 4 || (r == grid - 3 && c == 2))
-
-                val inFinderZone = (r in 0..5 && c in 0..5) ||
-                    (r in 0..5 && c in (grid - 6) until grid) ||
-                    (r in (grid - 6) until grid && c in 0..5)
-
-                val dataBit = !inFinderZone &&
-                    (abs(safePayload.hashCode() + r * 41 + c * 23 + safePayload[(r + c) % safePayload.length].code) % 2 == 0)
-
-                if (isTopLeftFinder || isTopRightFinder || isBottomLeftFinder || dataBit) {
+                if (matrix[r][c]) {
                     val x = left + c * cell
                     val y = top + r * cell
-                    canvas.drawRect(x, y, x + cell * 0.9f, y + cell * 0.9f, paint)
+                    canvas.drawRect(x, y, x + cell + 0.25f, y + cell + 0.25f, paint)
                 }
             }
         }

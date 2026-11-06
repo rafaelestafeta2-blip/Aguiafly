@@ -236,27 +236,26 @@ private fun QrMatrixCanvas(
     payload: String,
     qrSize: Dp
 ) {
+    val matrix = remember(payload) {
+        com.example.domain.export.IsoQrCodeEncoder.encodeToMatrix(payload)
+    }
     Canvas(
         modifier = Modifier
             .size(qrSize)
             .background(Color.White)
-            .padding(6.dp)
+            .padding(8.dp)
     ) {
-        val grid = 17
+        val grid = matrix.size
+        if (grid <= 0) return@Canvas
         val cellW = size.width / grid
         val cellH = size.height / grid
         for (r in 0 until grid) {
             for (c in 0 until grid) {
-                val isFinder = (r in 0..3 && c in 0..3) ||
-                    (r in 0..3 && c in (grid - 4) until grid) ||
-                    (r in (grid - 4) until grid && c in 0..3) ||
-                    (r == 8 && c == 8)
-                val hashBit = abs((payload.hashCode() + r * 37 + c * 19)) % 2 == 0
-                if (isFinder || hashBit) {
+                if (matrix[r][c]) {
                     drawRect(
-                        color = Color(0xFF061E3E),
+                        color = Color.Black,
                         topLeft = Offset(c * cellW, r * cellH),
-                        size = Size(cellW * 0.92f, cellH * 0.92f)
+                        size = Size(cellW + 0.4f, cellH + 0.4f)
                     )
                 }
             }
