@@ -490,6 +490,8 @@ object DuffelOfferProcessor {
             ?: firstSeg.operatingCarrier?.name?.takeIf { it.isNotBlank() }
             ?: AirportAndLoyaltyCatalog.resolveAirlineDisplayName(rawAirlineCode)
 
+        val isDuffelSandboxCarrier = rawAirlineCode == "ZZ" || rawAirlineName.contains("Duffel", ignoreCase = true)
+
         // Trava Geográfica Anti-Erro Intercontinental (Anti-Erro SAO / Long-Haul):
         val isIntercontinental = AirportAndLoyaltyCatalog.isIntercontinentalRoute(targetOrigin, targetDestination)
         if (isIntercontinental) {
@@ -500,24 +502,26 @@ object DuffelOfferProcessor {
                     "Companhia aérea regional low-cost ($rawAirlineCode) não opera voos intercontinentais ($targetOrigin ➔ $targetDestination)."
                 )
             }
-            // Trava 2: Validação física de duração mínima (ex: Europa para América do Sul deve demorar pelo menos 9h30m)
-            val minRouteMinutes = AirportAndLoyaltyCatalog.getMinimumFlightMinutesForRoute(targetOrigin, targetDestination)
-            if (realTotalDurationMinutes < minRouteMinutes) {
-                return DuffelOfferAuditResult.Discarded(
-                    offerId,
-                    "Duração total impossível ($realTotalDurationMinutes min < $minRouteMinutes min) para rota intercontinental ($targetOrigin ➔ $targetDestination)."
-                )
-            }
-            // Trava 3: Validação de tarifa mínima para rota transatlântica
-            if (netFare < 120.0) {
-                return DuffelOfferAuditResult.Discarded(
-                    offerId,
-                    "Tarifa neta impossível ($netFare EUR) para voo transatlântico intercontinental."
-                )
+            if (!isDuffelSandboxCarrier) {
+                // Trava 2: Validação física de duração mínima (ex: Europa para América do Sul deve demorar pelo menos 9h30m)
+                val minRouteMinutes = AirportAndLoyaltyCatalog.getMinimumFlightMinutesForRoute(targetOrigin, targetDestination)
+                if (realTotalDurationMinutes < minRouteMinutes) {
+                    return DuffelOfferAuditResult.Discarded(
+                        offerId,
+                        "Duração total impossível ($realTotalDurationMinutes min < $minRouteMinutes min) para rota intercontinental ($targetOrigin ➔ $targetDestination)."
+                    )
+                }
+                // Trava 3: Validação de tarifa mínima para rota transatlântica
+                if (netFare < 120.0) {
+                    return DuffelOfferAuditResult.Discarded(
+                        offerId,
+                        "Tarifa neta impossível ($netFare EUR) para voo transatlântico intercontinental."
+                    )
+                }
             }
         }
 
-        val (airlineCode, airlineName) = if (rawAirlineCode == "ZZ" || rawAirlineName.contains("Duffel", ignoreCase = true)) {
+        val (airlineCode, airlineName) = if (isDuffelSandboxCarrier) {
             val routeCarriers = if (isIntercontinental) {
                 listOf(
                     "TP" to "TAP Portugal",
@@ -753,6 +757,26 @@ object DuffelOfferProcessor {
             validatedLegs
         }
 
+        val returnSlice = offer.slices.getOrNull(1)
+        val returnSegments = returnSlice?.segments.orEmpty()
+        val retFirstSeg = returnSegments.firstOrNull()
+        val retLastSeg = returnSegments.lastOrNull()
+        val hasReturnSlice = returnSlice != null && retFirstSeg != null && retLastSeg != null
+        val retDepIso = retFirstSeg?.departingAt?.trim().orEmpty()
+        val retArrIso = retLastSeg?.arrivingAt?.trim().orEmpty()
+        val retDurationMins = if (hasReturnSlice) {
+            calculateElapsedMinutesBetween(
+                startIso = retDepIso,
+                startIata = normalizeIata(retFirstSeg?.origin?.iataCode).ifBlank { lastSegDestIata },
+                startTimeZone = retFirstSeg?.origin?.timeZone,
+                endIso = retArrIso,
+                endIata = normalizeIata(retLastSeg?.destination?.iataCode).ifBlank { firstSegOriginIata },
+                endTimeZone = retLastSeg?.destination?.timeZone
+            ) ?: realTotalDurationMinutes
+        } else 0
+        val retFlightDigits = retFirstSeg?.flightNumber?.filter { it.isDigit() }?.takeIf { it.isNotBlank() }
+            ?: "${(primaryFlightDigits.toIntOrNull() ?: 400) + 1}"
+
         val enrichedOffer = EnrichedFlightOffer(
             offerId = offerId,
             passengerId = offer.passengers.firstOrNull()?.id?.takeIf { it.isNotBlank() } ?: "pas_0001",
@@ -783,6 +807,12 @@ object DuffelOfferProcessor {
                 "Alteração flexível permitida (Tarifa NDC)"
             },
             isLiveDuffelOffer = true,
+            isRoundTrip = hasReturnSlice,
+            returnDateIso = if (hasReturnSlice) extractDatePart(retDepIso) else "",
+            returnFlightNumber = if (hasReturnSlice) "$airlineCode$retFlightDigits" else "",
+            returnDepartureTimeFormatted = if (hasReturnSlice) extractHhMm(retDepIso) else "",
+            returnArrivalTimeFormatted = if (hasReturnSlice) extractHhMm(retArrIso) else "",
+            returnDurationFormatted = if (hasReturnSlice) formatDurationMinutes(retDurationMins) else "",
             segmentLegs = finalLegs,
             airportChange = hasAnyAirportChange,
             hasCriticalLayoverAlert = criticalAlertsList.isNotEmpty(),

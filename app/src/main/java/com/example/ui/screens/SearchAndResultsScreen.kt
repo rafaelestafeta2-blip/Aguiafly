@@ -474,7 +474,10 @@ fun SearchAndResultsScreen(
                     }
 
                     Button(
-                        onClick = onExecuteSearch,
+                        onClick = {
+                            onUpdateSearchParams(localOrigin, localDest, localDate, localCabin)
+                            onExecuteSearch()
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)

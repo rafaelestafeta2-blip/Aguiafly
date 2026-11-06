@@ -604,58 +604,32 @@ class FlightRepository {
         if (liveOffers.isNotEmpty()) {
             val rawLiveMinNet = liveOffers.minOfOrNull { it.netFareEur } ?: 120.0
             val cabinMult = com.example.domain.concierge.AirportAndLoyaltyCatalog.cabinClassMultiplier(cabinClass)
+            val paxTripFactor = (tripType.multiplier * passengerComposition.fareMultiplier).coerceAtLeast(1.0)
             val dateMult = com.example.domain.concierge.AirportAndLoyaltyCatalog.calculateDateFareMultiplier(
                 originIata = originIata,
                 destinationIata = destinationIata,
                 dateIso = departureDate
             )
-            // Registra a base real da rota a partir do retorno ao vivo da API caso ainda não esteja calibrada
-            val currentRouteBaseEco = com.example.domain.concierge.AirportAndLoyaltyCatalog.resolveRouteBaseNetEcoEur(
-                originIata = originIata,
-                destinationIata = destinationIata
-            )
-            val derivedBaseEco = (rawLiveMinNet / (cabinMult * dateMult)).coerceIn(24.0, 600.0)
-            // Mantém uma única base real por rota para que qualquer dia clicado no calendário bata 100% com a busca
-            if (kotlin.math.abs(currentRouteBaseEco - derivedBaseEco) > 1.0) {
-                com.example.domain.concierge.AirportAndLoyaltyCatalog.recordLiveRouteBaseEcoNet(
-                    originIata = originIata,
-                    destinationIata = destinationIata,
-                    baseEcoNetEur = currentRouteBaseEco
-                )
-            }
-            val effectiveRouteBaseEco = com.example.domain.concierge.AirportAndLoyaltyCatalog.resolveRouteBaseNetEcoEur(
-                originIata = originIata,
-                destinationIata = destinationIata
-            )
-            val targetDateMinNet = kotlin.math.round(effectiveRouteBaseEco * cabinMult * dateMult * 100.0) / 100.0
-            val dateScaleFactor = if (rawLiveMinNet > 1.0) targetDateMinNet / rawLiveMinNet else 1.0
-
-            val calibratedLiveOffers = liveOffers.map { offer ->
-                val adjustedNet = kotlin.math.round(offer.netFareEur * dateScaleFactor * 100.0) / 100.0
-                offer.copy(
-                    netFareEur = adjustedNet,
-                    pricing = MarkupEngine.calculateBreakdown(adjustedNet, markupConfig)
-                )
-            }
-
-            val supplementaryCatalog = buildEuropeanNdcCatalog(
+            // Registra a base real da rota a partir do retorno ao vivo da API (sem alterar o valor real das ofertas)
+            val derivedBaseEco = (rawLiveMinNet / (cabinMult * dateMult * paxTripFactor)).coerceIn(15.0, 2000.0)
+            com.example.domain.concierge.AirportAndLoyaltyCatalog.recordLiveRouteBaseEcoNet(
                 originIata = originIata,
                 destinationIata = destinationIata,
-                departureDate = departureDate,
-                cabinClass = cabinClass,
-                markupConfig = markupConfig,
-                calibratedBaseNetEur = targetDateMinNet
+                baseEcoNetEur = derivedBaseEco
             )
-            val presentAirlines = calibratedLiveOffers.map { it.airlineIata.uppercase() }.toSet()
-            val missingCarrierOffers = if (!isAmadeusConfigured() && !isKiwiTequilaConfigured()) {
-                supplementaryCatalog.filter { it.airlineIata.uppercase() !in presentAirlines }
-            } else {
-                emptyList()
+
+            // Mantém 100% os valores exatos em tempo real retornados pela API da Duffel (total_amount),
+            // garantindo que o preço exibido na pesquisa seja idêntico ao preço no pagamento (Checkout).
+            val exactLiveOffers = liveOffers.map { offer ->
+                val exactNet = kotlin.math.round(offer.netFareEur * 100.0) / 100.0
+                offer.copy(
+                    netFareEur = exactNet,
+                    pricing = MarkupEngine.calculateBreakdown(exactNet, markupConfig)
+                )
             }
 
-            val combined = calibratedLiveOffers + missingCarrierOffers
             val validatedOffers = formatAndValidateFlightResults(
-                offers = combined,
+                offers = exactLiveOffers,
                 requestedOriginIata = originIata,
                 requestedDestinationIata = destinationIata
             )
@@ -739,8 +713,8 @@ class FlightRepository {
                 }
             }
 
-            // Trava 3: Coerência de Tarifa Transatlântica (impede voo intercontinental de 45€)
-            val effectiveNetFare = if (isIntercontinental && offer.netFareEur < 120.0) {
+            // Trava 3: Coerência de Tarifa Transatlântica apenas para ofertas de catálogo offline
+            val effectiveNetFare = if (!offer.isLiveDuffelOffer && isIntercontinental && offer.netFareEur < 120.0) {
                 maxOf(offer.netFareEur, minBaseNetEur)
             } else {
                 offer.netFareEur
@@ -1254,7 +1228,9 @@ class FlightRepository {
                             destinationIata = offer.destinationIata,
                             departureDate = offer.departureIso.take(10),
                             cabinClass = offer.cabinClass,
-                            markupConfig = markupConfig
+                            markupConfig = markupConfig,
+                            returnDate = offer.returnDateIso.takeIf { it.isNotBlank() },
+                            tripType = if (offer.isRoundTrip) com.example.data.model.TripType.ROUND_TRIP else com.example.data.model.TripType.ONE_WAY
                         ).firstOrNull { it.isLiveDuffelOffer }
                     } catch (_: Exception) { null }
 
@@ -1295,7 +1271,9 @@ class FlightRepository {
                                 destinationIata = offer.destinationIata,
                                 departureDate = offer.departureIso.take(10),
                                 cabinClass = offer.cabinClass,
-                                markupConfig = markupConfig
+                                markupConfig = markupConfig,
+                                returnDate = offer.returnDateIso.takeIf { it.isNotBlank() },
+                                tripType = if (offer.isRoundTrip) com.example.data.model.TripType.ROUND_TRIP else com.example.data.model.TripType.ONE_WAY
                             ).firstOrNull { it.isLiveDuffelOffer }
                         } catch (_: Exception) { null }
 
@@ -1352,7 +1330,9 @@ class FlightRepository {
                     destinationIata = offer.destinationIata,
                     departureDate = offer.departureIso.take(10),
                     cabinClass = offer.cabinClass,
-                    markupConfig = markupConfig
+                    markupConfig = markupConfig,
+                    returnDate = offer.returnDateIso.takeIf { it.isNotBlank() },
+                    tripType = if (offer.isRoundTrip) com.example.data.model.TripType.ROUND_TRIP else com.example.data.model.TripType.ONE_WAY
                 ).filter { it.isLiveDuffelOffer }
 
                 val bestCandidate = liveCandidates.minByOrNull { it.netFareEur }

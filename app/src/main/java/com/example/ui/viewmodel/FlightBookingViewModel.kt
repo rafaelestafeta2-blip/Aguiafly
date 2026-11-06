@@ -337,10 +337,12 @@ class FlightBookingViewModel(
         val safeRetDate = ensureValidReturnDate(_departureDate.value, rawRetDate)
         val totalFactor = trip.multiplier * pax.fareMultiplier
         val repriced = offers.map { offer ->
-            val baseNet = if (offer.isRoundTrip && trip == TripType.ROUND_TRIP) {
-                offer.netFareEur * pax.fareMultiplier
-            } else {
-                offer.netFareEur * totalFactor
+            // Ofertas ao vivo da Duffel (isLiveDuffelOffer == true) já vêm da API com o total_amount
+            // real calculado para os slices (Ida ou Ida+Volta) e passageiros solicitados.
+            val baseNet = when {
+                offer.isLiveDuffelOffer -> offer.netFareEur
+                offer.isRoundTrip && trip == TripType.ROUND_TRIP -> offer.netFareEur * pax.fareMultiplier
+                else -> offer.netFareEur * totalFactor
             }
             val adjustedNet = round(baseNet * 100.0) / 100.0
             val numPart = (offer.flightNumber.filter { it.isDigit() }.toIntOrNull() ?: 400) + 1
@@ -348,11 +350,21 @@ class FlightBookingViewModel(
                 netFareEur = adjustedNet,
                 pricing = MarkupEngine.calculateBreakdown(adjustedNet, config),
                 isRoundTrip = trip == TripType.ROUND_TRIP,
-                returnDateIso = if (trip == TripType.ROUND_TRIP) safeRetDate else "",
-                returnFlightNumber = if (trip == TripType.ROUND_TRIP) "${offer.airlineIata}$numPart" else "",
-                returnDepartureTimeFormatted = if (trip == TripType.ROUND_TRIP) "16:40" else "",
-                returnArrivalTimeFormatted = if (trip == TripType.ROUND_TRIP) "20:15" else "",
-                returnDurationFormatted = if (trip == TripType.ROUND_TRIP) offer.durationFormatted else ""
+                returnDateIso = if (trip == TripType.ROUND_TRIP) {
+                    offer.returnDateIso.ifBlank { safeRetDate }
+                } else "",
+                returnFlightNumber = if (trip == TripType.ROUND_TRIP) {
+                    offer.returnFlightNumber.ifBlank { "${offer.airlineIata}$numPart" }
+                } else "",
+                returnDepartureTimeFormatted = if (trip == TripType.ROUND_TRIP) {
+                    offer.returnDepartureTimeFormatted.ifBlank { "16:40" }
+                } else "",
+                returnArrivalTimeFormatted = if (trip == TripType.ROUND_TRIP) {
+                    offer.returnArrivalTimeFormatted.ifBlank { "20:15" }
+                } else "",
+                returnDurationFormatted = if (trip == TripType.ROUND_TRIP) {
+                    offer.returnDurationFormatted.ifBlank { offer.durationFormatted }
+                } else ""
             )
         }.sortedBy { it.pricing.displayFareBeforeAncillariesEur }
 
@@ -507,7 +519,11 @@ class FlightBookingViewModel(
     }
 
     fun updatePassengerComposition(composition: PassengerComposition) {
+        val changed = _passengerComposition.value != composition
         _passengerComposition.value = composition
+        if (changed) {
+            executeSearch()
+        }
     }
 
     fun updateFrequentFlyerSelection(selection: FrequentFlyerSelection) {
@@ -739,7 +755,7 @@ class FlightBookingViewModel(
         _statusBanner.value = "🔥 Promoção ${deal.originCity} ➔ ${deal.destinationCity} selecionada ($formattedPrice)!"
         onNavigateToCheckout()
 
-        // Atualiza a lista da rota em segundo plano mantendo a oferta promocional no topo
+        // Atualiza a lista da rota em segundo plano e sincroniza a oferta ao vivo da Duffel se necessário
         viewModelScope.launch {
             try {
                 val liveRouteOffers = flightRepository.searchFlights(
@@ -749,8 +765,19 @@ class FlightBookingViewModel(
                     cabinClass = "economy",
                     markupConfig = markupConfig.value
                 )
-                val merged = (listOf(exactPromoOffer) + liveRouteOffers.filter { it.offerId != exactPromoOffer.offerId })
-                _rawOffers.value = merged
+                val bestLive = liveRouteOffers.firstOrNull { it.isLiveDuffelOffer }
+                if (!exactPromoOffer.isLiveDuffelOffer && bestLive != null) {
+                    val syncedPricing = MarkupEngine.calculateBreakdown(
+                        bestLive.netFareEur,
+                        markupConfig.value,
+                        _selectedAncillaries.value
+                    )
+                    _selectedOffer.value = bestLive.copy(pricing = syncedPricing)
+                    _rawOffers.value = liveRouteOffers
+                } else {
+                    val merged = (listOf(exactPromoOffer) + liveRouteOffers.filter { it.offerId != exactPromoOffer.offerId })
+                    _rawOffers.value = merged
+                }
             } catch (_: Exception) {
                 _rawOffers.value = listOf(exactPromoOffer)
             }
